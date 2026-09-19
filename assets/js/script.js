@@ -18,6 +18,7 @@ function storageGet(key) {
     return null;
   }
 }
+
 function storageSet(key, val) {
   try {
     localStorage.setItem(key, val);
@@ -149,9 +150,11 @@ const translations = {
 };
 
 let currentLang = storageGet("lang") || "en";
+
 function t(key) {
   return translations[currentLang]?.[key] || translations.en[key] || key;
 }
+
 function numLocale() {
   return currentLang === "fa" ? "fa-IR" : "en-US";
 }
@@ -227,15 +230,19 @@ function buildDateFormatters() {
 function parseDate(d) {
   return new Date(`${d}T12:00:00Z`);
 }
+
 function toJalali(d) {
   return jalaliFullFormatter.format(parseDate(d));
 }
+
 function toJalaliShort(d) {
   return jalaliShortFormatter.format(parseDate(d));
 }
+
 function getJalaliMonthLabel(d) {
   return jalaliMonthFormatter.format(parseDate(d));
 }
+
 function getJalaliMonthKey(d) {
   const parts = jalaliMonthKeyFormatter.formatToParts(parseDate(d));
   const y = parts.find((p) => p.type === "year")?.value || "0000";
@@ -571,6 +578,7 @@ const STYLE_NAMES = {
   glass: "Glassmorphism",
   neu: "Neumorphism",
 };
+
 const URL_DEFAULTS = {
   view: "daily",
   mode: "charts",
@@ -580,15 +588,53 @@ const URL_DEFAULTS = {
 };
 
 // ============================================================
+// RENDER STATE TRACKER (prevents unnecessary rebuilds)
+// ============================================================
+let lastChartRenderState = null;
+
+function getChartRenderState() {
+  const visible = getVisibleAssets();
+  const visibleIds = visible
+    .map((a) => a.id)
+    .sort()
+    .join(",");
+  return {
+    visibleIds,
+    dataLength: currentEntries.length,
+    chartsPerRow,
+    dataHash:
+      currentEntries.length > 0
+        ? currentEntries[currentEntries.length - 1]?.time || ""
+        : "",
+  };
+}
+
+function needsChartRebuild() {
+  const currentState = getChartRenderState();
+  const needs =
+    !lastChartRenderState ||
+    lastChartRenderState.visibleIds !== currentState.visibleIds ||
+    lastChartRenderState.dataLength !== currentState.dataLength ||
+    lastChartRenderState.chartsPerRow !== currentState.chartsPerRow ||
+    lastChartRenderState.dataHash !== currentState.dataHash;
+
+  if (needs) lastChartRenderState = currentState;
+  return needs;
+}
+
+// ============================================================
 // DRAWER
 // ============================================================
 const isMobile = () => window.matchMedia("(max-width: 768px)").matches;
+
 function openDrawer() {
   document.body.classList.add("drawer-open");
 }
+
 function closeDrawer() {
   document.body.classList.remove("drawer-open");
 }
+
 function closeDrawerIfMobile() {
   if (isMobile()) closeDrawer();
 }
@@ -606,6 +652,9 @@ function applyCols() {
   colsToggle.querySelectorAll("button[data-cols]").forEach((b) => {
     b.classList.toggle("active", Number(b.dataset.cols) === chartsPerRow);
   });
+  if (currentMode === "charts" && lastChartRenderState) {
+    lastChartRenderState = null;
+  }
 }
 
 colsToggle.addEventListener("click", (e) => {
@@ -614,6 +663,7 @@ colsToggle.addEventListener("click", (e) => {
   chartsPerRow = Number(btn.dataset.cols);
   storageSet("chartsPerRow", String(chartsPerRow));
   applyCols();
+  renderDashboard();
 });
 
 // ============================================================
@@ -932,7 +982,9 @@ function renderFooter() {
   }
   const prefix =
     lastFooter.view === "daily" ? t("lastUpdated") : t("monthlyView");
-  appFooter.textContent = `Mesqal | مثقال — ${prefix}: ${toJalali(lastFooter.dateStr)} — ${lastFooter.time}`;
+  appFooter.textContent = `Mesqal | مثقال — ${prefix}: ${toJalali(
+    lastFooter.dateStr,
+  )} — ${lastFooter.time}`;
 }
 
 // ============================================================
@@ -1003,8 +1055,12 @@ function renderWallet() {
   const { total, holdings } = calculateWalletValue();
 
   walletSummary.innerHTML = `
-    <div class="wallet-stat"><div class="wallet-stat-label">${t("totalValue")}</div><div class="wallet-stat-value">${fmt(total)} T</div></div>
-    <div class="wallet-stat"><div class="wallet-stat-label">${t("holdings")}</div><div class="wallet-stat-value">${holdings.length}</div></div>
+    <div class="wallet-stat"><div class="wallet-stat-label">${t(
+      "totalValue",
+    )}</div><div class="wallet-stat-value">${fmt(total)} T</div></div>
+    <div class="wallet-stat"><div class="wallet-stat-label">${t(
+      "holdings",
+    )}</div><div class="wallet-stat-value">${holdings.length}</div></div>
   `;
 
   walletActions.innerHTML = `
@@ -1014,7 +1070,9 @@ function renderWallet() {
   `;
 
   if (!holdings.length) {
-    walletTable.innerHTML = `<div class="wallet-empty">${t("walletEmpty")}</div>`;
+    walletTable.innerHTML = `<div class="wallet-empty">${t(
+      "walletEmpty",
+    )}</div>`;
     feather.replace();
     return;
   }
@@ -1029,12 +1087,16 @@ function renderWallet() {
         .map(
           (h) => `
         <tr>
-          <td><div class="table-asset">${iconHtml(h.asset)}<span class="table-asset-name">${assetLabel(h.asset)}</span></div></td>
+          <td><div class="table-asset">${iconHtml(h.asset)}<span class="table-asset-name">${assetLabel(
+            h.asset,
+          )}</span></div></td>
           <td>${fmt(h.quantity)}</td>
           <td>${fmt(h.price)}</td>
           <td>${fmt(h.value)}</td>
           <td>${h.percentage.toFixed(1)}%</td>
-          <td><button class="btn" style="padding:6px 10px;height:auto" onclick="removeHolding('${h.asset.id}')"><i data-feather="trash-2" style="width:14px;height:14px"></i></button></td>
+          <td><button class="btn" style="padding:6px 10px;height:auto" onclick="removeHolding('${
+            h.asset.id
+          }')"><i data-feather="trash-2" style="width:14px;height:14px"></i></button></td>
         </tr>
       `,
         )
@@ -1051,18 +1113,28 @@ function showAddHoldingModal() {
     <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;max-width:400px;width:90%">
       <h3 style="margin-bottom:16px">${t("addHolding")}</h3>
       <div style="margin-bottom:12px">
-        <label style="display:block;margin-bottom:6px;font-size:.875rem;color:var(--muted)">${t("selectAsset")}</label>
+        <label style="display:block;margin-bottom:6px;font-size:.875rem;color:var(--muted)">${t(
+          "selectAsset",
+        )}</label>
         <select id="holdingAsset" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit">
-          ${ASSETS.map((a) => `<option value="${a.id}">${assetLabel(a)}</option>`).join("")}
+          ${ASSETS.map(
+            (a) => `<option value="${a.id}">${assetLabel(a)}</option>`,
+          ).join("")}
         </select>
       </div>
       <div style="margin-bottom:20px">
-        <label style="display:block;margin-bottom:6px;font-size:.875rem;color:var(--muted)">${t("enterQuantity")}</label>
+        <label style="display:block;margin-bottom:6px;font-size:.875rem;color:var(--muted)">${t(
+          "enterQuantity",
+        )}</label>
         <input type="number" id="holdingQuantity" step="any" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit" />
       </div>
       <div style="display:flex;gap:10px">
-        <button class="btn" style="flex:1" onclick="this.closest('[style*=fixed]').remove()">${t("cancel")}</button>
-        <button class="btn" style="flex:1;background:var(--accent);color:#fff;border-color:var(--accent)" onclick="addHolding()">${t("add")}</button>
+        <button class="btn" style="flex:1" onclick="this.closest('[style*=fixed]').remove()">${t(
+          "cancel",
+        )}</button>
+        <button class="btn" style="flex:1;background:var(--accent);color:#fff;border-color:var(--accent)" onclick="addHolding()">${t(
+          "add",
+        )}</button>
       </div>
     </div>
   `;
@@ -1111,11 +1183,18 @@ async function renderCalendar() {
   const firstAsset = ASSETS[0];
   calendarHeader.innerHTML = `
     <div>
-      <h2 style="margin-bottom:8px">${t("calendar")} - ${assetLabel(firstAsset)}</h2>
-      <p style="color:var(--muted);font-size:.875rem">Last ${Math.min(allDates.length, 365)} days</p>
+      <h2 style="margin-bottom:8px">${t("calendar")} - ${assetLabel(
+        firstAsset,
+      )}</h2>
+      <p style="color:var(--muted);font-size:.875rem">Last ${Math.min(
+        allDates.length,
+        365,
+      )} days</p>
     </div>
     <select id="calendarAsset" class="btn" style="min-width:150px">
-      ${ASSETS.map((a) => `<option value="${a.id}">${assetLabel(a)}</option>`).join("")}
+      ${ASSETS.map(
+        (a) => `<option value="${a.id}">${assetLabel(a)}</option>`,
+      ).join("")}
     </select>
   `;
   document.getElementById("calendarAsset").onchange = () => loadCalendarData();
@@ -1127,7 +1206,9 @@ async function loadCalendarData() {
     document.getElementById("calendarAsset")?.value || ASSETS[0].id;
   const asset = ASSETS.find((a) => a.id === assetId);
   if (!asset) return;
-  calendarGrid.innerHTML = `<div class="calendar-loading">${t("loadingCalendar")}</div>`;
+  calendarGrid.innerHTML = `<div class="calendar-loading">${t(
+    "loadingCalendar",
+  )}</div>`;
   const cacheKey = assetId;
   if (calendarCache.has(cacheKey)) {
     renderCalendarCells(calendarCache.get(cacheKey));
@@ -1191,9 +1272,15 @@ function showCalTooltip(cell, x, y) {
   const sign = ch >= 0 ? "+" : "";
   calTooltip.innerHTML = `
     <div class="tt-date">${toJalali(d.date)}</div>
-    <div class="tt-row"><span>${t("dayChange")}</span><strong class="${cls}">${sign}${ch.toFixed(2)}%</strong></div>
-    <div class="tt-row"><span>${t("start")}</span><strong>${fmt(d.open || null)}</strong></div>
-    <div class="tt-row"><span>${t("end")}</span><strong>${fmt(d.close || null)}</strong></div>
+    <div class="tt-row"><span>${t("dayChange")}</span><strong class="${cls}">${sign}${ch.toFixed(
+      2,
+    )}%</strong></div>
+    <div class="tt-row"><span>${t("start")}</span><strong>${fmt(
+      d.open || null,
+    )}</strong></div>
+    <div class="tt-row"><span>${t("end")}</span><strong>${fmt(
+      d.close || null,
+    )}</strong></div>
   `;
   calTooltip.classList.add("show");
   positionCalTooltip(x, y);
@@ -1220,15 +1307,18 @@ calendarGrid.addEventListener("pointermove", (e) => {
   }
   showCalTooltip(cell, e.clientX, e.clientY);
 });
+
 calendarGrid.addEventListener("pointerleave", () =>
   calTooltip.classList.remove("show"),
 );
+
 calendarGrid.addEventListener("click", (e) => {
   const cell = e.target.closest(".calendar-cell");
   if (!cell) return;
   const r = cell.getBoundingClientRect();
   showCalTooltip(cell, r.left + r.width / 2, r.top);
 });
+
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#calendarGrid")) calTooltip.classList.remove("show");
 });
@@ -1263,7 +1353,9 @@ function renderAfford() {
       const qty = amount > 0 ? amount / price : 0;
       return `
       <div class="afford-tile">
-        <div class="afford-tile-top">${iconHtml(asset)}<span class="hl-text">${assetLabel(asset)}</span></div>
+        <div class="afford-tile-top">${iconHtml(
+          asset,
+        )}<span class="hl-text">${assetLabel(asset)}</span></div>
         <div class="afford-price">${t("perUnit")}: ${fmt(price)}</div>
         <div class="afford-qty">${fmtQty(qty)} <small>${t("units")}</small></div>
       </div>
@@ -1324,7 +1416,7 @@ function getVisibleAssets() {
 }
 
 // ============================================================
-// DATA FETCHING (with CORS-safe helper)
+// DATA FETCHING
 // ============================================================
 async function fetchDay(date) {
   const latest = allDates[0];
@@ -1400,6 +1492,7 @@ async function loadData(date) {
   computeDisplayIndices(currentLabels.length, 240);
   extractMetaFromEntry(entries[entries.length - 1]);
   refreshDateLabel();
+  lastChartRenderState = null;
   renderDashboard();
   const last = entries[entries.length - 1];
   if (last) {
@@ -1427,10 +1520,15 @@ async function loadMonthlyData(dates, monthKey) {
   computeDisplayIndices(currentLabels.length, 120);
   extractMetaFromEntry(entries[entries.length - 1]);
   refreshDateLabel();
+  lastChartRenderState = null;
   renderDashboard();
   if (dates.length && entries.length) {
     const last = entries[entries.length - 1];
-    lastFooter = { view: "monthly", dateStr: dates[0], time: last.time || "" };
+    lastFooter = {
+      view: "monthly",
+      dateStr: dates[0],
+      time: last.time || "",
+    };
     renderFooter();
   }
 }
@@ -1459,7 +1557,9 @@ function createCard(asset) {
         <div class="asset-title">
           ${iconHtml(asset)}
           <h2 title="${label}">${label}</h2>
-          <button type="button" class="fav-btn ${isFav ? "active" : ""}" data-fav="${asset.id}" title="Favorite">
+          <button type="button" class="fav-btn ${
+            isFav ? "active" : ""
+          }" data-fav="${asset.id}" title="Favorite">
             <i data-feather="star"></i>
           </button>
         </div>
@@ -1618,7 +1718,9 @@ function updateAssetStats(assetId, values) {
   nowEl.textContent = fmt(stats.close);
   lowEl.textContent = fmt(stats.low);
   highEl.textContent = fmt(stats.high);
-  changeEl.textContent = `${stats.change >= 0 ? "▲" : "▼"} ${Math.abs(stats.change).toFixed(2)}%`;
+  changeEl.textContent = `${stats.change >= 0 ? "▲" : "▼"} ${Math.abs(
+    stats.change,
+  ).toFixed(2)}%`;
   changeEl.className = `price-change ${stats.change >= 0 ? "up" : "down"}`;
   const pos =
     stats.high > stats.low
@@ -1628,7 +1730,33 @@ function updateAssetStats(assetId, values) {
   dotEl.style.left = `${pos}%`;
 }
 
+function updateChartData(assetId, labels, data) {
+  const chart = charts[assetId];
+  if (!chart) return;
+
+  const mainIndex = chart.data.datasets.length - 1;
+  chart.data.labels = labels;
+  chart.data.datasets[mainIndex].data = data;
+
+  if (chart.data.datasets.length > 1) {
+    chart.data.datasets[0].data = data;
+  }
+
+  chart.update("none");
+}
+
 function renderCharts() {
+  if (!needsChartRebuild()) {
+    const visible = getVisibleAssets();
+    visible.forEach((asset) => {
+      const full = getAssetValues(asset, currentEntries);
+      const chartVals = displayIndices.map((i) => full[i] ?? null);
+      updateChartData(asset.id, displayLabels, chartVals);
+      updateAssetStats(asset.id, full);
+    });
+    return;
+  }
+
   destroyCharts();
   grid.innerHTML = "";
   grid.style.display = "";
@@ -1644,7 +1772,9 @@ function renderCharts() {
   }
   const visible = getVisibleAssets();
   if (!visible.length) {
-    grid.innerHTML = `<div class="empty-state">${activeCategory === "favorites" ? t("noFavorites") : t("noAssets")}</div>`;
+    grid.innerHTML = `<div class="empty-state">${
+      activeCategory === "favorites" ? t("noFavorites") : t("noAssets")
+    }</div>`;
     return;
   }
   visible.forEach((asset) => {
@@ -1689,7 +1819,11 @@ function renderHeatmap() {
       }
     }
     tile.className = cls;
-    tile.innerHTML = `<div class="heatmap-label">${iconHtml(asset)}<span class="hl-text" title="${label}">${label}</span></div><div><div class="heatmap-price">${stats ? fmt(stats.close) : "—"}</div><div class="${chCls}">${chTxt}</div></div>`;
+    tile.innerHTML = `<div class="heatmap-label">${iconHtml(
+      asset,
+    )}<span class="hl-text" title="${label}">${label}</span></div><div><div class="heatmap-price">${
+      stats ? fmt(stats.close) : "—"
+    }</div><div class="${chCls}">${chTxt}</div></div>`;
     heatmapGrid.appendChild(tile);
   });
 }
@@ -1704,7 +1838,9 @@ function renderTable() {
   tableBody.innerHTML = "";
   const visible = getVisibleAssets();
   if (!visible.length) {
-    tableBody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px">${t("noAssets")}</td></tr>`;
+    tableBody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px">${t(
+      "noAssets",
+    )}</td></tr>`;
     return;
   }
   visible.forEach((asset) => {
@@ -1716,10 +1852,18 @@ function renderTable() {
     if (stats) {
       const cls = stats.change >= 0 ? "up" : "down";
       const arrow = stats.change >= 0 ? "▲" : "▼";
-      ch = `<span class="table-change ${cls}">${arrow} ${Math.abs(stats.change).toFixed(2)}%</span>`;
+      ch = `<span class="table-change ${cls}">${arrow} ${Math.abs(
+        stats.change,
+      ).toFixed(2)}%</span>`;
     }
     const sparkId = `spark-${asset.id}`;
-    tr.innerHTML = `<td><div class="table-asset">${iconHtml(asset)}<span class="table-asset-name">${label}</span></div></td><td><canvas id="${sparkId}" class="sparkline-canvas"></canvas></td><td>${stats ? fmt(stats.close) : "—"}</td><td>${stats ? fmt(stats.low) : "—"}</td><td>${stats ? fmt(stats.high) : "—"}</td><td>${ch}</td>`;
+    tr.innerHTML = `<td><div class="table-asset">${iconHtml(
+      asset,
+    )}<span class="table-asset-name">${label}</span></div></td><td><canvas id="${sparkId}" class="sparkline-canvas"></canvas></td><td>${
+      stats ? fmt(stats.close) : "—"
+    }</td><td>${stats ? fmt(stats.low) : "—"}</td><td>${
+      stats ? fmt(stats.high) : "—"
+    }</td><td>${ch}</td>`;
     tableBody.appendChild(tr);
     requestAnimationFrame(() => {
       const canvas = document.getElementById(sparkId);
@@ -1732,13 +1876,24 @@ function renderDashboard() {
   assetStats = {};
   calTooltip.classList.remove("show");
   colsToggle.style.display = currentMode === "charts" ? "" : "none";
+
+  Object.values(modeSections).forEach((el) => {
+    if (el) el.style.display = "none";
+  });
+
+  const currentSection = modeSections[currentMode];
+  if (currentSection) {
+    currentSection.style.display = "";
+    animateIn(currentSection);
+  }
+
   if (currentMode === "charts") renderCharts();
   else if (currentMode === "heatmap") renderHeatmap();
   else if (currentMode === "table") renderTable();
   else if (currentMode === "wallet") renderWallet();
   else if (currentMode === "calendar") renderCalendar();
   else if (currentMode === "afford") renderAfford();
-  animateIn(modeSections[currentMode]);
+
   updateURLState();
 }
 
@@ -1857,6 +2012,7 @@ function setCategory(cat) {
   document
     .querySelectorAll("#categoryTabs .tab")
     .forEach((b) => b.classList.toggle("active", b.dataset.category === cat));
+  lastChartRenderState = null;
   renderDashboard();
 }
 
@@ -1880,9 +2036,15 @@ function renderCommandList() {
   commandList.innerHTML = commandFiltered
     .map(
       (cmd, i) => `
-    <div class="command-item ${i === commandSelectedIndex ? "selected" : ""}" data-index="${i}">
+    <div class="command-item ${
+      i === commandSelectedIndex ? "selected" : ""
+    }" data-index="${i}">
       <div class="command-item-text">${cmd.text}</div>
-      ${cmd.shortcut ? `<div class="command-item-shortcut">${cmd.shortcut}</div>` : ""}
+      ${
+        cmd.shortcut
+          ? `<div class="command-item-shortcut">${cmd.shortcut}</div>`
+          : ""
+      }
     </div>
   `,
     )
@@ -2076,6 +2238,7 @@ categoryTabs.addEventListener("click", (e) => {
       b.classList.toggle("active", b.dataset.category === activeCategory),
     );
   closeDrawerIfMobile();
+  lastChartRenderState = null;
   renderDashboard();
 });
 
@@ -2083,6 +2246,7 @@ assetSearch.addEventListener(
   "input",
   debounce(() => {
     searchQuery = assetSearch.value.trim().toLowerCase();
+    lastChartRenderState = null;
     renderDashboard();
   }, 200),
 );
@@ -2094,6 +2258,7 @@ grid.addEventListener("click", (e) => {
   toggleFavorite(id);
   const isFav = favorites.includes(id);
   if (activeCategory === "favorites") {
+    lastChartRenderState = null;
     renderDashboard();
     return;
   }
