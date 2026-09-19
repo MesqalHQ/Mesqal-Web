@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en" data-theme="dark" dir="ltr" data-style="flat">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Mesqal | مثقال — Live Gold, Currency & PAMP Prices</title>
+    <meta
+      name="description"
+      content="Mesqal (مثقال) — live and historical prices of gold, sekkeh, currencies, crypto and PAMP bars in Iran."
+    />
+    <meta
+      name="keywords"
+      content="mesqal, مثقال, gold price iran, tehran gold, sekkeh price, pamp gold bar, dollar to toman"
+    />
+    <meta name="author" content="Amirmasoud" />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" id="metaThemeColor" content="#09090b" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Mesqal | مثقال" />
+    <meta
+      property="og:title"
+      content="Mesqal | مثقال — Live Gold, Currency & PAMP Prices"
+    />
+    <meta
+      property="og:description"
+      content="Live and historical prices of gold, sekkeh, currencies, crypto and PAMP bars in Iran."
+    />
+    <meta property="og:locale" content="fa_IR" id="ogLocale" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta property="og:url" content="" id="ogUrl" />
+    <meta property="og:image" content="" id="ogImage" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Mesqal | مثقال — Live Gold, Currency & PAMP Prices"
+    />
+    <meta
+      name="twitter:description"
+      content="Live and historical prices of gold, sekkeh, currencies, crypto and PAMP bars in Iran."
+    />
+    <meta name="twitter:image" content="" id="twitterImage" />
+
+    <link rel="canonical" href="" id="canonicalLink" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Mesqal",
+        "alternateName": "مثقال",
+        "applicationCategory": "FinanceApplication",
+        "operatingSystem": "Any",
+        "inLanguage": ["fa-IR", "en-US"],
+        "description": "Live and historical prices of gold, sekkeh, currencies, crypto and PAMP bars in Iran."
+      }
+    </script>
+
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="apple-touch-icon" href="favicon.svg" />
+    <link rel="mask-icon" href="favicon.svg" color="#F5C33B" />
+    <link rel="manifest" href="site.webmanifest" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <link rel="preconnect" href="https://unpkg.com" />
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/feather-icons"></script>
+
+    <link rel="stylesheet" href="assets/css/style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="header-brand">
+        <button class="btn menu-btn" id="menuBtn" title="Menu">
+          <i data-feather="menu"></i>
+        </button>
+        <div class="brand">
+          <img
+            class="brand-mark"
+            src="favicon.svg"
+            alt="Mesqal"
+            width="38"
+            height="38"
+          />
+          <h1 class="brand-text">
+            <span class="brand-fa">مثقال</span>
+            <span class="brand-en">Mesqal</span>
+          </h1>
+        </div>
+        <p class="header-tagline" data-i18n="tagline">
+          Gold, currency & PAMP — live from Tehran
+        </p>
+        <div class="header-spacer"></div>
+        <div class="today-chip">
+          <i data-feather="calendar"></i>
+          <span id="todayChip">—</span>
+        </div>
+      </div>
+
+      <div class="header-controls" id="headerControls">
+        <div class="header-row header-row-main">
+          <div class="controls-main">
+            <div class="view-toggle" id="viewToggle">
+              <button data-view="daily" class="active" data-i18n="daily">
+                Daily
+              </button>
+              <button data-view="monthly" data-i18n="monthly">Monthly</button>
+            </div>
+            <div class="date-dropdown">
+              <button class="btn" id="dateBtn">
+                <i data-feather="calendar"></i>
+                <span id="dateBtnText">Loading...</span>
+              </button>
+              <div id="dateMenu" class="date-menu"></div>
+            </div>
+          </div>
+          <div class="controls-icons">
+            <button class="btn" id="langBtn" title="Language">EN</button>
+            <button class="btn" id="styleBtn" title="UI Style">
+              <i data-feather="layout"></i>
+            </button>
+            <button class="btn" id="themeBtn" title="Theme">
+              <i data-feather="moon"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="drawer-divider"></div>
+
+        <div class="header-row header-row-modes">
+          <div class="mode-toggle" id="modeToggle">
+            <button data-mode="charts" class="active">
+              <i data-feather="bar-chart-2"></i
+              ><span data-i18n="charts">Charts</span>
+            </button>
+            <button data-mode="heatmap">
+              <i data-feather="grid"></i
+              ><span data-i18n="heatmap">Heatmap</span>
+            </button>
+            <button data-mode="table">
+              <i data-feather="list"></i><span data-i18n="table">Table</span>
+            </button>
+            <button data-mode="wallet">
+              <i data-feather="briefcase"></i
+              ><span data-i18n="wallet">Wallet</span>
+            </button>
+            <button data-mode="calendar">
+              <i data-feather="calendar"></i
+              ><span data-i18n="calendar">Calendar</span>
+            </button>
+            <button data-mode="afford">
+              <i data-feather="shopping-cart"></i
+              ><span data-i18n="afford">Afford</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="header-row header-row-cats">
+          <nav class="tabs" id="categoryTabs" aria-label="Asset categories">
+            <button class="tab active" data-category="all" data-i18n="all">
+              All
+            </button>
+            <button class="tab" data-category="currency" data-i18n="currencies">
+              Currencies
+            </button>
+            <button class="tab" data-category="gold" data-i18n="gold">
+              Gold
+            </button>
+            <button class="tab" data-category="crypto" data-i18n="crypto">
+              Crypto
+            </button>
+            <button class="tab" data-category="pamp">PAMP</button>
+            <button class="tab" data-category="favorites">
+              <i data-feather="star"></i>
+              <span data-i18n="favorites">Favorites</span>
+            </button>
+          </nav>
+        </div>
+
+        <button class="btn drawer-close" id="drawerClose" title="Close">
+          <i data-feather="x"></i>
+        </button>
+      </div>
+    </header>
+
+    <div class="drawer-overlay" id="drawerOverlay"></div>
+
+    <main>
+      <div class="search-section">
+        <div
+          class="cols-toggle"
+          id="colsToggle"
+          role="group"
+          aria-label="Charts per row"
+        >
+          <span class="cols-label" data-i18n="columns">Columns</span>
+          <button data-cols="1">1</button>
+          <button data-cols="2" class="active">2</button>
+          <button data-cols="3">3</button>
+          <button data-cols="4">4</button>
+        </div>
+        <div class="search-wrap">
+          <i data-feather="search"></i>
+          <input
+            id="assetSearch"
+            class="search-input"
+            type="text"
+            placeholder="Search..."
+            data-i18n-placeholder="search"
+          />
+        </div>
+      </div>
+
+      <section class="grid" id="chartGrid" aria-label="Price charts"></section>
+      <section class="heatmap" id="heatmapGrid" style="display: none"></section>
+
+      <section
+        class="table-container"
+        id="tableContainer"
+        style="display: none"
+      >
+        <table class="data-table" id="dataTable">
+          <thead>
+            <tr>
+              <th data-i18n="asset">Asset</th>
+              <th data-i18n="trend">Trend</th>
+              <th data-i18n="now">Now</th>
+              <th data-i18n="low">Low</th>
+              <th data-i18n="high">High</th>
+              <th data-i18n="change">Change</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </section>
+
+      <section class="wallet-section" id="walletSection" style="display: none">
+        <div class="wallet-summary" id="walletSummary"></div>
+        <div class="wallet-actions" id="walletActions"></div>
+        <div class="wallet-table" id="walletTable"></div>
+      </section>
+
+      <section
+        class="calendar-section"
+        id="calendarSection"
+        style="display: none"
+      >
+        <div class="calendar-header" id="calendarHeader"></div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+      </section>
+
+      <section class="afford-section" id="affordSection" style="display: none">
+        <div class="afford-header">
+          <label for="affordAmount" data-i18n="affordHave"
+            >I have (Toman)</label
+          >
+          <input
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            id="affordAmount"
+            class="search-input"
+            value="1,000,000"
+          />
+        </div>
+        <div class="afford-grid" id="affordGrid"></div>
+      </section>
+    </main>
+
+    <footer id="appFooter">
+      Mesqal | مثقال — data updated via GitHub Actions
+    </footer>
+    <div class="cal-tooltip" id="calTooltip"></div>
+
+    <div class="command-palette" id="commandPalette">
+      <div class="command-palette-inner">
+        <input
+          type="text"
+          class="command-search"
+          id="commandSearch"
+          placeholder="Type a command..."
+        />
+        <div class="command-list" id="commandList"></div>
+      </div>
+    </div>
+
+    <script src="assets/js/script.js"></script>
+  </body>
+</html>

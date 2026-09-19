@@ -1,0 +1,14 @@
+{
+  "name": "Mesqal | مثقال",
+  "short_name": "Mesqal",
+  "description": "Live gold, currency & PAMP price dashboard for Iran",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#18181b",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Mesqal">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFDE7A"/>
+      <stop offset="1" stop-color="#E09A1F"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#181410"/>
+  <polyline points="14,31 24,20 32,26 45,13" fill="none" stroke="#F5C33B" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="47" cy="11" r="4" fill="#F5C33B"/>
+  <path d="M16 49h32l-6-15H22z" fill="url(#g)"/>
+  <path d="M22 34h20l-1.5-4h-17z" fill="#FFF3C4" opacity=".9"/>
+</svg>
