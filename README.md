@@ -192,6 +192,6 @@ Feel free to use, modify, and distribute.
 
 Built with ❤️ by Amirmasoud
 
-**Mesqal HQ**
+**Powering the Mesqal Ecosystem**
 
 </div>
