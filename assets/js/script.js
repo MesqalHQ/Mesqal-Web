@@ -525,6 +525,7 @@ let searchQuery = "";
 let allDates = [];
 let allMonths = [];
 let currentEntries = [];
+let currentDayEntries = null; // monthly view: full intraday entries per day
 let currentLabels = [];
 let displayLabels = [];
 let displayIndices = [];
@@ -593,7 +594,8 @@ function ensureApexCharts() {
   if (!apexLoading) {
     apexLoading = true;
     const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/apexcharts@3.54.1/dist/apexcharts.min.js";
+    script.src =
+      "https://cdn.jsdelivr.net/npm/apexcharts@3.54.1/dist/apexcharts.min.js";
     script.onload = () => {
       if (currentMode === "charts" && currentChartType === "candle") {
         lastChartRenderState = null;
@@ -616,7 +618,10 @@ let lastChartRenderState = null;
 
 function getChartRenderState() {
   const visible = getVisibleAssets();
-  const visibleIds = visible.map((a) => a.id).sort().join(",");
+  const visibleIds = visible
+    .map((a) => a.id)
+    .sort()
+    .join(",");
   return {
     visibleIds,
     dataLength: currentEntries.length,
@@ -625,6 +630,7 @@ function getChartRenderState() {
     theme: currentTheme,
     style: currentStyle,
     lang: currentLang,
+    view: currentView,
     dataHash:
       currentEntries.length > 0
         ? currentEntries[currentEntries.length - 1]?.time || ""
@@ -643,6 +649,7 @@ function needsChartRebuild() {
     lastChartRenderState.theme !== currentState.theme ||
     lastChartRenderState.style !== currentState.style ||
     lastChartRenderState.lang !== currentState.lang ||
+    lastChartRenderState.view !== currentState.view ||
     lastChartRenderState.dataHash !== currentState.dataHash;
 
   if (needs) lastChartRenderState = currentState;
@@ -1536,39 +1543,65 @@ function calculateStats(values) {
   return { open, prev, close, low, high, change };
 }
 
-function buildCandleSeries(labels, data, targetCount = 30) {
-  const cleanData = [];
-  const cleanLabels = [];
+// ============================================================
+// TRUE OHLC CANDLE BUILDER
+// ============================================================
+// Daily view  -> groups intraday snapshots into ~48 time-bucket candles
+// Monthly view-> one real candle per day (O=first, H=max, L=min, C=last)
+function buildCandles(asset) {
+  const candles = [];
 
-  for (let i = 0; i < data.length; i++) {
-    if (data[i] != null && data[i] > 0) {
-      cleanData.push(data[i]);
-      cleanLabels.push(labels[i] ?? "");
+  if (
+    currentView === "monthly" &&
+    Array.isArray(currentDayEntries) &&
+    currentDayEntries.length
+  ) {
+    for (let i = 0; i < currentDayEntries.length; i++) {
+      const vals = getAssetValues(asset, currentDayEntries[i]).filter(
+        (v) => v != null && v > 0,
+      );
+      if (!vals.length) continue;
+      candles.push({
+        x: currentLabels[i] || String(i),
+        y: [
+          vals[0],
+          Math.max(...vals),
+          Math.min(...vals),
+          vals[vals.length - 1],
+        ],
+      });
     }
+    return candles;
   }
 
-  if (!cleanData.length) return [];
+  // Daily: bucket intraday points
+  const full = getAssetValues(asset, currentEntries);
+  const pts = [];
+  for (let i = 0; i < full.length; i++) {
+    if (full[i] != null && full[i] > 0) {
+      pts.push({ label: currentLabels[i] || String(i), v: full[i] });
+    }
+  }
+  if (!pts.length) return candles;
 
-  const chunkSize = Math.max(1, Math.floor(cleanData.length / targetCount));
-  const seriesData = [];
+  const target = 48;
+  const chunk = Math.max(1, Math.floor(pts.length / target));
 
-  for (let i = 0; i < cleanData.length; i += chunkSize) {
-    const chunk = cleanData.slice(i, i + chunkSize);
-    const chunkLabels = cleanLabels.slice(i, i + chunkSize);
-    if (!chunk.length) continue;
-
-    seriesData.push({
-      x: chunkLabels[0] || String(i),
+  for (let i = 0; i < pts.length; i += chunk) {
+    const g = pts.slice(i, i + chunk);
+    const vals = g.map((p) => p.v);
+    candles.push({
+      x: g[0].label,
       y: [
-        chunk[0],
-        Math.max(...chunk),
-        Math.min(...chunk),
-        chunk[chunk.length - 1],
+        vals[0],
+        Math.max(...vals),
+        Math.min(...vals),
+        vals[vals.length - 1],
       ],
     });
   }
 
-  return seriesData;
+  return candles;
 }
 
 async function loadData(date) {
@@ -1578,6 +1611,7 @@ async function loadData(date) {
   selectedDate = date;
   selectedMonthKey = null;
   currentEntries = entries;
+  currentDayEntries = null;
   currentLabels = entries.map((e) => e.time || "");
   computeDisplayIndices(currentLabels.length, 240);
   extractMetaFromEntry(entries[entries.length - 1]);
@@ -1597,12 +1631,14 @@ async function loadMonthlyData(dates, monthKey) {
   const allData = await Promise.all(dates.map((d) => fetchDay(d)));
   const labels = [];
   const entries = [];
+  const dayEntries = [];
 
   for (let i = dates.length - 1; i >= 0; i--) {
     const day = allData[i];
     if (Array.isArray(day) && day.length > 0) {
       labels.push(toJalaliShort(dates[i]));
       entries.push(day[day.length - 1]);
+      dayEntries.push(day); // keep FULL intraday data for real OHLC candles
     }
   }
 
@@ -1610,6 +1646,7 @@ async function loadMonthlyData(dates, monthKey) {
   selectedDate = null;
   currentLabels = labels;
   currentEntries = entries;
+  currentDayEntries = dayEntries;
   computeDisplayIndices(currentLabels.length, 120);
   extractMetaFromEntry(entries[entries.length - 1]);
   refreshDateLabel();
@@ -1714,7 +1751,7 @@ function createChart(canvasId, labels, data, label, color) {
   const colors = getChartColors();
 
   // ==========================================================
-  // CANDLE MODE — ApexCharts
+  // CANDLE MODE — ApexCharts (true OHLC candlesticks)
   // ==========================================================
   if (currentChartType === "candle") {
     canvas.style.display = "none";
@@ -1728,7 +1765,8 @@ function createChart(canvasId, labels, data, label, color) {
       return;
     }
 
-    const seriesData = buildCandleSeries(labels, data, 30);
+    const asset = ASSETS.find((a) => a.id === canvasId);
+    const seriesData = asset ? buildCandles(asset) : [];
 
     if (!seriesData.length) {
       apexDiv.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${colors.text};opacity:.7;font-size:.85rem;">${t(
@@ -1752,46 +1790,18 @@ function createChart(canvasId, labels, data, label, color) {
         foreColor: colors.text,
         parentHeightOffset: 0,
         toolbar: { show: false },
-        zoom: {
-          enabled: true,
-          type: "x",
-        },
-        animations: {
-          enabled: true,
-          easing: "easeinout",
-          speed: 250,
-        },
+        zoom: { enabled: true, type: "x" },
+        animations: { enabled: true, easing: "easeinout", speed: 250 },
       },
       dataLabels: { enabled: false },
       plotOptions: {
         candlestick: {
-          colors: {
-            upward: green,
-            downward: red,
-          },
-          wick: {
-            useFillColor: true,
-          },
+          colors: { upward: green, downward: red },
+          wick: { useFillColor: true },
         },
       },
-      states: {
-        hover: {
-          filter: { type: "none" },
-        },
-      },
-      grid: {
-        show: true,
-        borderColor: colors.grid,
-        strokeDashArray: 4,
-        padding: {
-          left: 10,
-          right: 10,
-          top: 10,
-          bottom: 10,
-        },
-        xaxis: { lines: { show: true } },
-        yaxis: { lines: { show: true } },
-      },
+      states: { hover: { filter: { type: "none" } } },
+      grid: { show: false },
       xaxis: {
         labels: {
           show: true,
@@ -1804,7 +1814,7 @@ function createChart(canvasId, labels, data, label, color) {
             fontWeight: 600,
           },
         },
-        axisBorder: { show: false },
+        axisBorder: { show: true, color: colors.grid },
         axisTicks: { show: false },
         tooltip: { enabled: false },
       },
@@ -1823,14 +1833,12 @@ function createChart(canvasId, labels, data, label, color) {
               : "";
           },
         },
-        tooltip: {
-          enabled: true,
-        },
+        tooltip: { enabled: true },
       },
       tooltip: {
         enabled: true,
         theme: currentTheme === "dark" ? "dark" : "light",
-        custom: function ({ series, seriesIndex, dataPointIndex, w }) {
+        custom: function ({ seriesIndex, dataPointIndex, w }) {
           const item = w.config.series[seriesIndex].data[dataPointIndex];
           if (!item || !Array.isArray(item.y) || item.y.length < 4) return "";
 
@@ -2014,9 +2022,9 @@ function updateChartData(assetId, labels, data) {
   if (currentChartType === "candle") {
     const chart = apexChartsInstances[assetId];
     if (!chart) return;
-
-    const seriesData = buildCandleSeries(labels, data, 30);
-    chart.updateSeries([{ data: seriesData }], false);
+    const asset = ASSETS.find((a) => a.id === assetId);
+    if (!asset) return;
+    chart.updateSeries([{ data: buildCandles(asset) }], false);
     return;
   }
 
@@ -2244,7 +2252,9 @@ function updatePampTabVisibility() {
   const hasPampData = currentEntries.some(
     (e) => e?.pamp && Array.isArray(e.pamp.items) && e.pamp.items.length > 0,
   );
-  const pampTab = document.querySelector('#categoryTabs [data-category="pamp"]');
+  const pampTab = document.querySelector(
+    '#categoryTabs [data-category="pamp"]',
+  );
   if (pampTab) pampTab.style.display = hasPampData ? "" : "none";
 }
 
@@ -2325,7 +2335,8 @@ const commands = [
     id: "chartType",
     text: "Toggle Line / Candle Charts",
     shortcut: "C",
-    action: () => setChartType(currentChartType === "candle" ? "line" : "candle"),
+    action: () =>
+      setChartType(currentChartType === "candle" ? "line" : "candle"),
   },
   { id: "all", text: "Show All Assets", action: () => setCategory("all") },
   {
@@ -2489,7 +2500,8 @@ document.addEventListener("keydown", (e) => {
   else if (key === "6") setMode("afford");
   else if (key === "t") applyTheme(currentTheme === "dark" ? "light" : "dark");
   else if (key === "l") applyLanguage(currentLang === "en" ? "fa" : "en");
-  else if (key === "c") setChartType(currentChartType === "candle" ? "line" : "candle");
+  else if (key === "c")
+    setChartType(currentChartType === "candle" ? "line" : "candle");
   else if (key === "s") {
     const idx = STYLES.indexOf(currentStyle);
     applyStyle(STYLES[(idx + 1) % STYLES.length]);
@@ -2702,15 +2714,11 @@ if (searchQuery) assetSearch.value = searchQuery;
 
 document
   .querySelectorAll("#viewToggle button")
-  .forEach((b) =>
-    b.classList.toggle("active", b.dataset.view === currentView),
-  );
+  .forEach((b) => b.classList.toggle("active", b.dataset.view === currentView));
 
 document
   .querySelectorAll("#modeToggle button")
-  .forEach((b) =>
-    b.classList.toggle("active", b.dataset.mode === currentMode),
-  );
+  .forEach((b) => b.classList.toggle("active", b.dataset.mode === currentMode));
 
 document
   .querySelectorAll("#categoryTabs .tab")
