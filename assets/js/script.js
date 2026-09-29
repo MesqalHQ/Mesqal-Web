@@ -592,33 +592,50 @@ const candlestickPlugin = {
     const dataset = chart.data.datasets[0];
     if (!dataset || !dataset.candleData) return;
 
-    const xScale = scales.x;
     const yScale = scales.y;
     const candleData = dataset.candleData;
     if (!candleData.length) return;
 
+    // Get calculated pixel coordinates for the dummy dataset points
+    const meta = chart.getDatasetMeta(0);
+    if (!meta || !meta.data || !meta.data.length) return;
+
     ctx.save();
 
-    const chartWidth = xScale.width;
-    const numCandles = candleData.length;
-    const barWidth = Math.max(2, (chartWidth / numCandles) * 0.6);
+    // Dynamically calculate bar width based on the pixel distance between points
+    let barWidth = 10;
+    if (meta.data.length > 1) {
+      const p1 = meta.data[0];
+      const p2 = meta.data[1];
+      if (p1 && p2 && !isNaN(p1.x) && !isNaN(p2.x)) {
+        barWidth = Math.abs(p2.x - p1.x) * 0.65;
+      }
+    }
+    barWidth = Math.max(2, Math.min(barWidth, 24)); // Clamp between 2px and 24px
 
     const root = getComputedStyle(document.documentElement);
     const green = root.getPropertyValue("--green").trim() || "#22c55e";
     const red = root.getPropertyValue("--red").trim() || "#ef4444";
 
     candleData.forEach((candle, i) => {
-      if (!candle) return;
-      const x = xScale.getPixelForValue(i);
+      if (!candle || !meta.data[i]) return;
+      
+      const point = meta.data[i];
+      const x = point.x;
+      if (x === undefined || isNaN(x)) return;
+
       const yOpen = yScale.getPixelForValue(candle.o);
       const yClose = yScale.getPixelForValue(candle.c);
       const yHigh = yScale.getPixelForValue(candle.h);
       const yLow = yScale.getPixelForValue(candle.l);
 
+      // Skip if any coordinate is invalid
+      if ([yOpen, yClose, yHigh, yLow].some(v => v === undefined || isNaN(v))) return;
+
       const isUp = candle.c >= candle.o;
       const color = isUp ? green : red;
 
-      // Draw wick
+      // 1. Draw Wick (High to Low)
       ctx.beginPath();
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
@@ -626,13 +643,14 @@ const candlestickPlugin = {
       ctx.lineTo(x, yLow);
       ctx.stroke();
 
-      // Draw body
+      // 2. Draw Body (Open to Close)
       const bodyTop = Math.min(yOpen, yClose);
-      const bodyHeight = Math.max(Math.abs(yClose - yOpen), 1);
+      const bodyHeight = Math.max(Math.abs(yClose - yOpen), 1); // Min 1px height for doji candles
 
       ctx.fillStyle = color;
       ctx.fillRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
 
+      // Stroke the body for crisp edges on high-DPI screens
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.strokeRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
@@ -1688,7 +1706,7 @@ function createChart(canvasId, labels, data, label, color) {
     const pad = (maxVal - minVal) * 0.08 || 1;
 
     charts[canvasId] = new Chart(canvas.getContext("2d"), {
-      type: "scatter",
+      type: "line", // Changed from scatter to line
       data: {
         labels: candleLabels,
         datasets: [
@@ -1696,6 +1714,7 @@ function createChart(canvasId, labels, data, label, color) {
             data: candles.map((c) => c.c),
             candleData: candles,
             borderWidth: 0,
+            showLine: false, // Crucial: hides the line so only our plugin draws
             pointRadius: 0,
             pointHoverRadius: 0,
           },
@@ -1760,6 +1779,7 @@ function createChart(canvasId, labels, data, label, color) {
     return;
   }
 
+  // ... (Keep the rest of the line chart logic exactly as it was) ...
   let lastValidIndex = -1;
   for (let i = data.length - 1; i >= 0; i--) {
     if (data[i] != null && data[i] > 0) {
@@ -1928,11 +1948,13 @@ function updateChartData(assetId, labels, data) {
 
     const allH = candles.map((c) => c.h);
     const allL = candles.map((c) => c.l);
-    const minVal = Math.min(...allL);
-    const maxVal = Math.max(...allH);
-    const pad = (maxVal - minVal) * 0.08 || 1;
-    chart.options.scales.y.min = minVal - pad;
-    chart.options.scales.y.max = maxVal + pad;
+    if (allH.length > 0) {
+        const minVal = Math.min(...allL);
+        const maxVal = Math.max(...allH);
+        const pad = (maxVal - minVal) * 0.08 || 1;
+        chart.options.scales.y.min = minVal - pad;
+        chart.options.scales.y.max = maxVal + pad;
+    }
 
     chart.update("none");
   } else {
