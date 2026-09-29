@@ -4,7 +4,6 @@
 const CONFIG = {
   API_BASE: "https://mesqalhq.github.io/Mesqal-API",
   FIN_API: "https://api.dastyar.io/express/financial-item",
-  PAMP_API: "https://amirmasoud.netlify.app/api/v1/pamp",
   REFRESH_INTERVAL: 60 * 1000, // 60 seconds (future use)
 };
 
@@ -98,6 +97,8 @@ const translations = {
     perUnit: "Price per unit",
     units: "units",
     loadingCalendar: "Loading calendar data...",
+    line: "Line",
+    candle: "Candle",
   },
   fa: {
     daily: "روزانه",
@@ -146,6 +147,8 @@ const translations = {
     perUnit: "قیمت هر واحد",
     units: "واحد",
     loadingCalendar: "در حال بارگذاری داده‌های تقویم...",
+    line: "خطی",
+    candle: "کندل",
   },
 };
 
@@ -428,19 +431,9 @@ function extractMetaFromEntry(entry) {
 
 async function loadAssetMetaFromAPI() {
   try {
-    const [finRes, pampRes] = await Promise.allSettled([
-      safeFetch(CONFIG.FIN_API).then((r) => r?.json()),
-      safeFetch(CONFIG.PAMP_API).then((r) => r?.json()),
-    ]);
-    if (finRes.status === "fulfilled" && Array.isArray(finRes.value)) {
-      finRes.value.forEach(mergeFinMeta);
-    }
-    if (
-      pampRes.status === "fulfilled" &&
-      pampRes.value &&
-      Array.isArray(pampRes.value.items)
-    ) {
-      pampRes.value.items.forEach(mergePampMeta);
+    const finRes = await safeFetch(CONFIG.FIN_API).then((r) => r?.json());
+    if (Array.isArray(finRes)) {
+      finRes.forEach(mergeFinMeta);
     }
   } catch (e) {
     console.warn("Meta API load failed:", e);
@@ -537,6 +530,7 @@ let displayIndices = [];
 let selectedDate = null;
 let selectedMonthKey = null;
 let lastFooter = null;
+let currentChartType = storageGet("chartType") || "candle";
 
 let favorites = [];
 try {
@@ -588,20 +582,80 @@ const URL_DEFAULTS = {
 };
 
 // ============================================================
+// CANDLESTICK PLUGIN FOR CHART.JS
+// ============================================================
+const candlestickPlugin = {
+  id: "candlestickDrawer",
+  afterDatasetsDraw(chart) {
+    if (currentChartType !== "candle") return;
+    const { ctx, scales } = chart;
+    const dataset = chart.data.datasets[0];
+    if (!dataset || !dataset.candleData) return;
+
+    const xScale = scales.x;
+    const yScale = scales.y;
+    const candleData = dataset.candleData;
+    if (!candleData.length) return;
+
+    ctx.save();
+
+    const chartWidth = xScale.width;
+    const numCandles = candleData.length;
+    const barWidth = Math.max(2, (chartWidth / numCandles) * 0.6);
+
+    const root = getComputedStyle(document.documentElement);
+    const green = root.getPropertyValue("--green").trim() || "#22c55e";
+    const red = root.getPropertyValue("--red").trim() || "#ef4444";
+
+    candleData.forEach((candle, i) => {
+      if (!candle) return;
+      const x = xScale.getPixelForValue(i);
+      const yOpen = yScale.getPixelForValue(candle.o);
+      const yClose = yScale.getPixelForValue(candle.c);
+      const yHigh = yScale.getPixelForValue(candle.h);
+      const yLow = yScale.getPixelForValue(candle.l);
+
+      const isUp = candle.c >= candle.o;
+      const color = isUp ? green : red;
+
+      // Draw wick
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.moveTo(x, yHigh);
+      ctx.lineTo(x, yLow);
+      ctx.stroke();
+
+      // Draw body
+      const bodyTop = Math.min(yOpen, yClose);
+      const bodyHeight = Math.max(Math.abs(yClose - yOpen), 1);
+
+      ctx.fillStyle = color;
+      ctx.fillRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x - barWidth / 2, bodyTop, barWidth, bodyHeight);
+    });
+
+    ctx.restore();
+  },
+};
+Chart.register(candlestickPlugin);
+
+// ============================================================
 // RENDER STATE TRACKER (prevents unnecessary rebuilds)
 // ============================================================
 let lastChartRenderState = null;
 
 function getChartRenderState() {
   const visible = getVisibleAssets();
-  const visibleIds = visible
-    .map((a) => a.id)
-    .sort()
-    .join(",");
+  const visibleIds = visible.map((a) => a.id).sort().join(",");
   return {
     visibleIds,
     dataLength: currentEntries.length,
     chartsPerRow,
+    chartType: currentChartType,
     dataHash:
       currentEntries.length > 0
         ? currentEntries[currentEntries.length - 1]?.time || ""
@@ -616,6 +670,7 @@ function needsChartRebuild() {
     lastChartRenderState.visibleIds !== currentState.visibleIds ||
     lastChartRenderState.dataLength !== currentState.dataLength ||
     lastChartRenderState.chartsPerRow !== currentState.chartsPerRow ||
+    lastChartRenderState.chartType !== currentState.chartType ||
     lastChartRenderState.dataHash !== currentState.dataHash;
 
   if (needs) lastChartRenderState = currentState;
@@ -961,6 +1016,15 @@ function applyLanguage(lang) {
   renderFooter();
   fillSEO();
   closeDrawerIfMobile();
+  
+  const chartTypeToggle = document.getElementById("chartTypeToggle");
+  if (chartTypeToggle) {
+    chartTypeToggle.innerHTML = `
+      <button data-type="line" class="${currentChartType === "line" ? "active" : ""}">${t("line")}</button>
+      <button data-type="candle" class="${currentChartType === "candle" ? "active" : ""}">${t("candle")}</button>
+    `;
+  }
+
   renderDashboard();
 }
 
@@ -1596,6 +1660,106 @@ function createChart(canvasId, labels, data, label, color) {
   if (charts[canvasId]) charts[canvasId].destroy();
 
   const colors = getChartColors();
+
+  if (currentChartType === "candle") {
+    const chunkSize = Math.max(1, Math.floor(data.length / 30));
+    const candles = [];
+    const candleLabels = [];
+
+    for (let i = 0; i < data.length; i += chunkSize) {
+      const chunk = data.slice(i, i + chunkSize);
+      const chunkLabels = labels.slice(i, i + chunkSize);
+      const clean = chunk.filter((v) => v != null && v > 0);
+      if (clean.length === 0) continue;
+
+      candles.push({
+        o: clean[0],
+        c: clean[clean.length - 1],
+        h: Math.max(...clean),
+        l: Math.min(...clean),
+      });
+      candleLabels.push(chunkLabels[0] || "");
+    }
+
+    const allH = candles.map((c) => c.h);
+    const allL = candles.map((c) => c.l);
+    const minVal = Math.min(...allL);
+    const maxVal = Math.max(...allH);
+    const pad = (maxVal - minVal) * 0.08 || 1;
+
+    charts[canvasId] = new Chart(canvas.getContext("2d"), {
+      type: "scatter",
+      data: {
+        labels: candleLabels,
+        datasets: [
+          {
+            data: candles.map((c) => c.c),
+            candleData: candles,
+            borderWidth: 0,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        resizeDelay: 120,
+        animation: { duration: 300, easing: "easeOutQuart" },
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: colors.tooltipBg,
+            titleColor: colors.tooltipText,
+            bodyColor: colors.tooltipText,
+            borderColor: colors.tooltipBorder,
+            borderWidth: 1,
+            padding: 12,
+            displayColors: false,
+            callbacks: {
+              title: (items) => (items.length ? items[0].label : ""),
+              label: (ctx) => {
+                const candle = ctx.dataset.candleData?.[ctx.dataIndex];
+                if (!candle) return "";
+                return [
+                  `O: ${fmt(candle.o)}`,
+                  `H: ${fmt(candle.h)}`,
+                  `L: ${fmt(candle.l)}`,
+                  `C: ${fmt(candle.c)}`,
+                ];
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: colors.text,
+              maxRotation: 0,
+              autoSkipPadding: 18,
+              maxTicksLimit: 8,
+              font: { family: colors.fontFamily, weight: 600 },
+            },
+            grid: { color: colors.grid },
+          },
+          y: {
+            min: minVal - pad,
+            max: maxVal + pad,
+            ticks: {
+              color: colors.text,
+              maxTicksLimit: 6,
+              font: { family: colors.fontFamily, weight: 600 },
+              callback: (v) => Number(v).toLocaleString(numLocale()),
+            },
+            grid: { color: colors.grid },
+          },
+        },
+      },
+    });
+    return;
+  }
+
   let lastValidIndex = -1;
   for (let i = data.length - 1; i >= 0; i--) {
     if (data[i] != null && data[i] > 0) {
@@ -1740,15 +1904,48 @@ function updateChartData(assetId, labels, data) {
   const chart = charts[assetId];
   if (!chart) return;
 
-  const mainIndex = chart.data.datasets.length - 1;
-  chart.data.labels = labels;
-  chart.data.datasets[mainIndex].data = data;
+  if (currentChartType === "candle") {
+    const chunkSize = Math.max(1, Math.floor(data.length / 30));
+    const candles = [];
+    const candleLabels = [];
+    for (let i = 0; i < data.length; i += chunkSize) {
+      const chunk = data.slice(i, i + chunkSize);
+      const chunkLabels = labels.slice(i, i + chunkSize);
+      const clean = chunk.filter((v) => v != null && v > 0);
+      if (clean.length === 0) continue;
+      candles.push({
+        o: clean[0],
+        c: clean[clean.length - 1],
+        h: Math.max(...clean),
+        l: Math.min(...clean),
+      });
+      candleLabels.push(chunkLabels[0] || "");
+    }
 
-  if (chart.data.datasets.length > 1) {
-    chart.data.datasets[0].data = data;
+    chart.data.labels = candleLabels;
+    chart.data.datasets[0].data = candles.map((c) => c.c);
+    chart.data.datasets[0].candleData = candles;
+
+    const allH = candles.map((c) => c.h);
+    const allL = candles.map((c) => c.l);
+    const minVal = Math.min(...allL);
+    const maxVal = Math.max(...allH);
+    const pad = (maxVal - minVal) * 0.08 || 1;
+    chart.options.scales.y.min = minVal - pad;
+    chart.options.scales.y.max = maxVal + pad;
+
+    chart.update("none");
+  } else {
+    const mainIndex = chart.data.datasets.length - 1;
+    chart.data.labels = labels;
+    chart.data.datasets[mainIndex].data = data;
+
+    if (chart.data.datasets.length > 1) {
+      chart.data.datasets[0].data = data;
+    }
+
+    chart.update("none");
   }
-
-  chart.update("none");
 }
 
 function renderCharts() {
@@ -2332,6 +2529,31 @@ document
   .forEach((b) =>
     b.classList.toggle("active", b.dataset.category === activeCategory),
   );
+
+// Inject Chart Type Toggle
+const searchSection = document.querySelector(".search-section");
+const chartTypeToggle = document.createElement("div");
+chartTypeToggle.className = "view-toggle";
+chartTypeToggle.id = "chartTypeToggle";
+chartTypeToggle.innerHTML = `
+  <button data-type="line" class="${currentChartType === "line" ? "active" : ""}">${t("line")}</button>
+  <button data-type="candle" class="${currentChartType === "candle" ? "active" : ""}">${t("candle")}</button>
+`;
+searchSection.insertBefore(chartTypeToggle, colsToggle);
+
+chartTypeToggle.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-type]");
+  if (!btn) return;
+  currentChartType = btn.dataset.type;
+  storageSet("chartType", currentChartType);
+  chartTypeToggle
+    .querySelectorAll("button")
+    .forEach((b) =>
+      b.classList.toggle("active", b.dataset.type === currentChartType),
+    );
+  lastChartRenderState = null;
+  renderDashboard();
+});
 
 feather.replace();
 fillSEO();
