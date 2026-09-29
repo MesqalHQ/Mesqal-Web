@@ -1893,6 +1893,7 @@ function renderDashboard() {
   }
 
   assetStats = {};
+  updatePampTabVisibility();
   calTooltip.classList.remove("show");
   colsToggle.style.display = currentMode === "charts" ? "" : "none";
 
