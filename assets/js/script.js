@@ -1400,7 +1400,13 @@ function drawSparkline(canvas, values, color) {
 // ============================================================
 function getVisibleAssets() {
   const q = searchQuery;
+  // Check if current entries have any PAMP data
+  const hasPampData = currentEntries.some(
+    (e) => e?.pamp && Array.isArray(e.pamp.items) && e.pamp.items.length > 0
+  );
   return ASSETS.filter((asset) => {
+    // Hide PAMP assets entirely when no PAMP data exists
+    if (asset.category === "pamp" && !hasPampData) return false;
     const okCat =
       activeCategory === "all" ||
       (activeCategory === "favorites"
@@ -1873,6 +1879,19 @@ function renderTable() {
 }
 
 function renderDashboard() {
+  // Auto-switch away from PAMP if no PAMP data in current entries
+  if (activeCategory === "pamp") {
+    const hasPampData = currentEntries.some(
+      (e) => e?.pamp && Array.isArray(e.pamp.items) && e.pamp.items.length > 0
+    );
+    if (!hasPampData) {
+      activeCategory = "all";
+      document.querySelectorAll("#categoryTabs .tab").forEach((b) =>
+        b.classList.toggle("active", b.dataset.category === "all")
+      );
+    }
+  }
+
   assetStats = {};
   calTooltip.classList.remove("show");
   colsToggle.style.display = currentMode === "charts" ? "" : "none";
@@ -1895,6 +1914,14 @@ function renderDashboard() {
   else if (currentMode === "afford") renderAfford();
 
   updateURLState();
+}
+
+function updatePampTabVisibility() {
+  const hasPampData = currentEntries.some(
+    (e) => e?.pamp && Array.isArray(e.pamp.items) && e.pamp.items.length > 0
+  );
+  const pampTab = document.querySelector('#categoryTabs [data-category="pamp"]');
+  if (pampTab) pampTab.style.display = hasPampData ? "" : "none";
 }
 
 // ============================================================
