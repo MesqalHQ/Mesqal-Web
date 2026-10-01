@@ -4,6 +4,7 @@
 const CONFIG = {
   API_BASE: "https://mesqalhq.github.io/Mesqal-API",
   FIN_API: "https://api.dastyar.io/express/financial-item",
+  PAMP_API: "https://amirmasoud.netlify.app/api/v1/pamp",
   REFRESH_INTERVAL: 60 * 1000, // 60 seconds (future use)
 };
 
@@ -97,8 +98,6 @@ const translations = {
     perUnit: "Price per unit",
     units: "units",
     loadingCalendar: "Loading calendar data...",
-    line: "Line",
-    candle: "Candle",
   },
   fa: {
     daily: "روزانه",
@@ -147,8 +146,6 @@ const translations = {
     perUnit: "قیمت هر واحد",
     units: "واحد",
     loadingCalendar: "در حال بارگذاری داده‌های تقویم...",
-    line: "خطی",
-    candle: "کندل",
   },
 };
 
@@ -431,9 +428,19 @@ function extractMetaFromEntry(entry) {
 
 async function loadAssetMetaFromAPI() {
   try {
-    const finRes = await safeFetch(CONFIG.FIN_API).then((r) => r?.json());
-    if (Array.isArray(finRes)) {
-      finRes.forEach(mergeFinMeta);
+    const [finRes, pampRes] = await Promise.allSettled([
+      safeFetch(CONFIG.FIN_API).then((r) => r?.json()),
+      safeFetch(CONFIG.PAMP_API).then((r) => r?.json()),
+    ]);
+    if (finRes.status === "fulfilled" && Array.isArray(finRes.value)) {
+      finRes.value.forEach(mergeFinMeta);
+    }
+    if (
+      pampRes.status === "fulfilled" &&
+      pampRes.value &&
+      Array.isArray(pampRes.value.items)
+    ) {
+      pampRes.value.items.forEach(mergePampMeta);
     }
   } catch (e) {
     console.warn("Meta API load failed:", e);
@@ -467,7 +474,6 @@ function iconHtml(asset) {
 // DOM ELEMENTS
 // ============================================================
 const charts = {};
-const apexChartsInstances = {};
 const dataCache = new Map();
 const calendarCache = new Map();
 let assetStats = {};
@@ -525,14 +531,12 @@ let searchQuery = "";
 let allDates = [];
 let allMonths = [];
 let currentEntries = [];
-let currentDayEntries = null; // monthly view: full intraday entries per day
 let currentLabels = [];
 let displayLabels = [];
 let displayIndices = [];
 let selectedDate = null;
 let selectedMonthKey = null;
 let lastFooter = null;
-let currentChartType = storageGet("chartType") || "candle";
 
 let favorites = [];
 try {
@@ -584,34 +588,6 @@ const URL_DEFAULTS = {
 };
 
 // ============================================================
-// APEXCHARTS LOADER
-// ============================================================
-let apexLoading = false;
-
-function ensureApexCharts() {
-  if (window.ApexCharts) return true;
-
-  if (!apexLoading) {
-    apexLoading = true;
-    const script = document.createElement("script");
-    script.src =
-      "https://cdn.jsdelivr.net/npm/apexcharts@3.54.1/dist/apexcharts.min.js";
-    script.onload = () => {
-      if (currentMode === "charts" && currentChartType === "candle") {
-        lastChartRenderState = null;
-        renderDashboard();
-      }
-    };
-    script.onerror = () => {
-      console.warn("Failed to load ApexCharts from CDN.");
-    };
-    document.head.appendChild(script);
-  }
-
-  return false;
-}
-
-// ============================================================
 // RENDER STATE TRACKER (prevents unnecessary rebuilds)
 // ============================================================
 let lastChartRenderState = null;
@@ -626,11 +602,6 @@ function getChartRenderState() {
     visibleIds,
     dataLength: currentEntries.length,
     chartsPerRow,
-    chartType: currentChartType,
-    theme: currentTheme,
-    style: currentStyle,
-    lang: currentLang,
-    view: currentView,
     dataHash:
       currentEntries.length > 0
         ? currentEntries[currentEntries.length - 1]?.time || ""
@@ -645,11 +616,6 @@ function needsChartRebuild() {
     lastChartRenderState.visibleIds !== currentState.visibleIds ||
     lastChartRenderState.dataLength !== currentState.dataLength ||
     lastChartRenderState.chartsPerRow !== currentState.chartsPerRow ||
-    lastChartRenderState.chartType !== currentState.chartType ||
-    lastChartRenderState.theme !== currentState.theme ||
-    lastChartRenderState.style !== currentState.style ||
-    lastChartRenderState.lang !== currentState.lang ||
-    lastChartRenderState.view !== currentState.view ||
     lastChartRenderState.dataHash !== currentState.dataHash;
 
   if (needs) lastChartRenderState = currentState;
@@ -975,7 +941,6 @@ function applyLanguage(lang) {
   document.documentElement.lang = lang;
   document.documentElement.dir = lang === "fa" ? "rtl" : "ltr";
   buildDateFormatters();
-
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     el.textContent = t(el.getAttribute("data-i18n"));
   });
@@ -985,20 +950,10 @@ function applyLanguage(lang) {
   document.querySelectorAll("[data-i18n-title]").forEach((el) => {
     el.title = t(el.getAttribute("data-i18n-title"));
   });
-
   langBtn.textContent = lang === "en" ? "EN" : "فا";
   document
     .getElementById("ogLocale")
     ?.setAttribute("content", lang === "fa" ? "fa_IR" : "en_US");
-
-  const chartTypeToggle = document.getElementById("chartTypeToggle");
-  if (chartTypeToggle) {
-    chartTypeToggle.innerHTML = `
-      <button data-type="line" class="${currentChartType === "line" ? "active" : ""}">${t("line")}</button>
-      <button data-type="candle" class="${currentChartType === "candle" ? "active" : ""}">${t("candle")}</button>
-    `;
-  }
-
   refreshAffordInputDisplay();
   rebuildMonths();
   renderDateMenu();
@@ -1251,21 +1206,17 @@ async function loadCalendarData() {
     document.getElementById("calendarAsset")?.value || ASSETS[0].id;
   const asset = ASSETS.find((a) => a.id === assetId);
   if (!asset) return;
-
   calendarGrid.innerHTML = `<div class="calendar-loading">${t(
     "loadingCalendar",
   )}</div>`;
-
   const cacheKey = assetId;
   if (calendarCache.has(cacheKey)) {
     renderCalendarCells(calendarCache.get(cacheKey));
     return;
   }
-
   const datesToLoad = allDates.slice(0, Math.min(365, allDates.length));
   const batchSize = 20;
   const dayChanges = [];
-
   for (let i = 0; i < datesToLoad.length; i += batchSize) {
     const batch = datesToLoad.slice(i, i + batchSize);
     const batchPromises = batch.map(async (date) => {
@@ -1284,7 +1235,6 @@ async function loadCalendarData() {
     const batchResults = await Promise.all(batchPromises);
     dayChanges.push(...batchResults);
   }
-
   dayChanges.reverse();
   calendarCache.set(cacheKey, dayChanges);
   renderCalendarCells(dayChanges);
@@ -1450,22 +1400,14 @@ function drawSparkline(canvas, values, color) {
 // ============================================================
 function getVisibleAssets() {
   const q = searchQuery;
-  const hasPampData = currentEntries.some(
-    (e) => e?.pamp && Array.isArray(e.pamp.items) && e.pamp.items.length > 0,
-  );
-
   return ASSETS.filter((asset) => {
-    if (asset.category === "pamp" && !hasPampData) return false;
-
     const okCat =
       activeCategory === "all" ||
       (activeCategory === "favorites"
         ? favorites.includes(asset.id)
         : asset.category === activeCategory);
-
     if (!okCat) return false;
     if (!q) return true;
-
     const en = asset.label.toLowerCase();
     const fa = (assetMeta[asset.id]?.faTitle || "").toLowerCase();
     const faPamp = asset.category === "pamp" ? assetLabel(asset) : "";
@@ -1507,26 +1449,22 @@ function getAssetValues(asset, entries) {
   return entries.map((entry) => {
     if (!entry) return null;
     let price = null;
-
     if (Array.isArray(entry.data)) {
       const it = entry.data.find((i) => String(i.key) === String(asset.key));
       if (it) price = Number(it.price);
     }
-
     if (price == null && Array.isArray(entry.financial)) {
       const it = entry.financial.find(
         (i) => String(i.key) === String(asset.key),
       );
       if (it) price = Number(it.price);
     }
-
     if (price == null && entry.pamp && Array.isArray(entry.pamp.items)) {
       const it = entry.pamp.items.find(
         (i) => Number(i.weightGram) === Number(asset.key),
       );
       if (it) price = Number(it.price);
     }
-
     return Number.isFinite(price) && price > 0 ? price : null;
   });
 }
@@ -1543,67 +1481,6 @@ function calculateStats(values) {
   return { open, prev, close, low, high, change };
 }
 
-// ============================================================
-// TRUE OHLC CANDLE BUILDER
-// ============================================================
-// Daily view  -> groups intraday snapshots into ~48 time-bucket candles
-// Monthly view-> one real candle per day (O=first, H=max, L=min, C=last)
-function buildCandles(asset) {
-  const candles = [];
-
-  if (
-    currentView === "monthly" &&
-    Array.isArray(currentDayEntries) &&
-    currentDayEntries.length
-  ) {
-    for (let i = 0; i < currentDayEntries.length; i++) {
-      const vals = getAssetValues(asset, currentDayEntries[i]).filter(
-        (v) => v != null && v > 0,
-      );
-      if (!vals.length) continue;
-      candles.push({
-        x: currentLabels[i] || String(i),
-        y: [
-          vals[0],
-          Math.max(...vals),
-          Math.min(...vals),
-          vals[vals.length - 1],
-        ],
-      });
-    }
-    return candles;
-  }
-
-  // Daily: bucket intraday points
-  const full = getAssetValues(asset, currentEntries);
-  const pts = [];
-  for (let i = 0; i < full.length; i++) {
-    if (full[i] != null && full[i] > 0) {
-      pts.push({ label: currentLabels[i] || String(i), v: full[i] });
-    }
-  }
-  if (!pts.length) return candles;
-
-  const target = 48;
-  const chunk = Math.max(1, Math.floor(pts.length / target));
-
-  for (let i = 0; i < pts.length; i += chunk) {
-    const g = pts.slice(i, i + chunk);
-    const vals = g.map((p) => p.v);
-    candles.push({
-      x: g[0].label,
-      y: [
-        vals[0],
-        Math.max(...vals),
-        Math.min(...vals),
-        vals[vals.length - 1],
-      ],
-    });
-  }
-
-  return candles;
-}
-
 async function loadData(date) {
   renderSkeletonCards();
   const json = await fetchDay(date);
@@ -1611,14 +1488,12 @@ async function loadData(date) {
   selectedDate = date;
   selectedMonthKey = null;
   currentEntries = entries;
-  currentDayEntries = null;
   currentLabels = entries.map((e) => e.time || "");
   computeDisplayIndices(currentLabels.length, 240);
   extractMetaFromEntry(entries[entries.length - 1]);
   refreshDateLabel();
   lastChartRenderState = null;
   renderDashboard();
-
   const last = entries[entries.length - 1];
   if (last) {
     lastFooter = { view: "daily", dateStr: date, time: last.time };
@@ -1629,30 +1504,24 @@ async function loadData(date) {
 async function loadMonthlyData(dates, monthKey) {
   renderSkeletonCards();
   const allData = await Promise.all(dates.map((d) => fetchDay(d)));
-  const labels = [];
-  const entries = [];
-  const dayEntries = [];
-
+  const labels = [],
+    entries = [];
   for (let i = dates.length - 1; i >= 0; i--) {
     const day = allData[i];
     if (Array.isArray(day) && day.length > 0) {
       labels.push(toJalaliShort(dates[i]));
       entries.push(day[day.length - 1]);
-      dayEntries.push(day); // keep FULL intraday data for real OHLC candles
     }
   }
-
   selectedMonthKey = monthKey;
   selectedDate = null;
   currentLabels = labels;
   currentEntries = entries;
-  currentDayEntries = dayEntries;
   computeDisplayIndices(currentLabels.length, 120);
   extractMetaFromEntry(entries[entries.length - 1]);
   refreshDateLabel();
   lastChartRenderState = null;
   renderDashboard();
-
   if (dates.length && entries.length) {
     const last = entries[entries.length - 1];
     lastFooter = {
@@ -1670,19 +1539,8 @@ async function loadMonthlyData(dates, monthKey) {
 function destroyCharts() {
   Object.keys(charts).forEach((id) => {
     if (charts[id]) {
-      try {
-        charts[id].destroy();
-      } catch {}
+      charts[id].destroy();
       delete charts[id];
-    }
-  });
-
-  Object.keys(apexChartsInstances).forEach((id) => {
-    if (apexChartsInstances[id]) {
-      try {
-        apexChartsInstances[id].destroy();
-      } catch {}
-      delete apexChartsInstances[id];
     }
   });
 }
@@ -1720,10 +1578,7 @@ function createCard(asset) {
         <div class="price-change" id="change-${asset.id}">—</div>
       </div>
     </div>
-    <div class="chart-wrap">
-      <canvas id="${asset.id}"></canvas>
-      <div id="apex-${asset.id}" style="position:absolute;inset:0;width:100%;height:100%;display:none;"></div>
-    </div>
+    <div class="chart-wrap"><canvas id="${asset.id}"></canvas></div>
   `;
   grid.appendChild(div);
   requestAnimationFrame(() => div.classList.add("visible"));
@@ -1731,145 +1586,10 @@ function createCard(asset) {
 
 function createChart(canvasId, labels, data, label, color) {
   const canvas = document.getElementById(canvasId);
-  const apexDiv = document.getElementById("apex-" + canvasId);
-  if (!canvas || !apexDiv) return;
-
-  if (charts[canvasId]) {
-    try {
-      charts[canvasId].destroy();
-    } catch {}
-    delete charts[canvasId];
-  }
-
-  if (apexChartsInstances[canvasId]) {
-    try {
-      apexChartsInstances[canvasId].destroy();
-    } catch {}
-    delete apexChartsInstances[canvasId];
-  }
+  if (!canvas) return;
+  if (charts[canvasId]) charts[canvasId].destroy();
 
   const colors = getChartColors();
-
-  // ==========================================================
-  // CANDLE MODE — ApexCharts (true OHLC candlesticks)
-  // ==========================================================
-  if (currentChartType === "candle") {
-    canvas.style.display = "none";
-    apexDiv.style.display = "block";
-
-    if (!window.ApexCharts) {
-      ensureApexCharts();
-      apexDiv.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${colors.text};opacity:.7;font-size:.85rem;">${t(
-        "loading",
-      )}</div>`;
-      return;
-    }
-
-    const asset = ASSETS.find((a) => a.id === canvasId);
-    const seriesData = asset ? buildCandles(asset) : [];
-
-    if (!seriesData.length) {
-      apexDiv.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${colors.text};opacity:.7;font-size:.85rem;">${t(
-        "noData",
-      )}</div>`;
-      return;
-    }
-
-    const root = getComputedStyle(document.documentElement);
-    const green = root.getPropertyValue("--green").trim() || "#22c55e";
-    const red = root.getPropertyValue("--red").trim() || "#ef4444";
-
-    const options = {
-      series: [{ name: label, data: seriesData }],
-      chart: {
-        type: "candlestick",
-        height: "100%",
-        width: "100%",
-        background: "transparent",
-        fontFamily: colors.fontFamily,
-        foreColor: colors.text,
-        parentHeightOffset: 0,
-        toolbar: { show: false },
-        zoom: { enabled: true, type: "x" },
-        animations: { enabled: true, easing: "easeinout", speed: 250 },
-      },
-      dataLabels: { enabled: false },
-      plotOptions: {
-        candlestick: {
-          colors: { upward: green, downward: red },
-          wick: { useFillColor: true },
-        },
-      },
-      states: { hover: { filter: { type: "none" } } },
-      grid: { show: false },
-      xaxis: {
-        labels: {
-          show: true,
-          rotateAlways: false,
-          hideOverlappingLabels: true,
-          style: {
-            colors: colors.text,
-            fontSize: "10px",
-            fontFamily: colors.fontFamily,
-            fontWeight: 600,
-          },
-        },
-        axisBorder: { show: true, color: colors.grid },
-        axisTicks: { show: false },
-        tooltip: { enabled: false },
-      },
-      yaxis: {
-        labels: {
-          style: {
-            colors: colors.text,
-            fontSize: "10px",
-            fontFamily: colors.fontFamily,
-            fontWeight: 600,
-          },
-          formatter: (val) => {
-            const n = Number(val);
-            return Number.isFinite(n)
-              ? n.toLocaleString(numLocale(), { maximumFractionDigits: 2 })
-              : "";
-          },
-        },
-        tooltip: { enabled: true },
-      },
-      tooltip: {
-        enabled: true,
-        theme: currentTheme === "dark" ? "dark" : "light",
-        custom: function ({ seriesIndex, dataPointIndex, w }) {
-          const item = w.config.series[seriesIndex].data[dataPointIndex];
-          if (!item || !Array.isArray(item.y) || item.y.length < 4) return "";
-
-          const [o, h, l, c] = item.y;
-          const isUp = c >= o;
-          const trendColor = isUp ? green : red;
-
-          return `
-            <div style="background:${colors.tooltipBg};border:1px solid ${colors.tooltipBorder};border-radius:10px;padding:10px 12px;color:${colors.tooltipText};font-family:${colors.fontFamily};font-size:12px;line-height:1.8;box-shadow:0 8px 24px rgba(0,0,0,.22);min-width:130px;">
-              <div style="font-weight:700;margin-bottom:4px;">${item.x}</div>
-              <div style="display:flex;justify-content:space-between;gap:14px;"><span style="opacity:.75">O</span><strong>${fmt(o)}</strong></div>
-              <div style="display:flex;justify-content:space-between;gap:14px;"><span style="opacity:.75">H</span><strong>${fmt(h)}</strong></div>
-              <div style="display:flex;justify-content:space-between;gap:14px;"><span style="opacity:.75">L</span><strong>${fmt(l)}</strong></div>
-              <div style="display:flex;justify-content:space-between;gap:14px;"><span style="opacity:.75">C</span><strong style="color:${trendColor}">${fmt(c)}</strong></div>
-            </div>
-          `;
-        },
-      },
-    };
-
-    apexChartsInstances[canvasId] = new ApexCharts(apexDiv, options);
-    apexChartsInstances[canvasId].render();
-    return;
-  }
-
-  // ==========================================================
-  // LINE MODE — Chart.js
-  // ==========================================================
-  canvas.style.display = "block";
-  apexDiv.style.display = "none";
-
   let lastValidIndex = -1;
   for (let i = data.length - 1; i >= 0; i--) {
     if (data[i] != null && data[i] > 0) {
@@ -1892,7 +1612,6 @@ function createChart(canvasId, labels, data, label, color) {
       pointHoverRadius: 0,
     });
   }
-
   datasets.push({
     label,
     data,
@@ -1917,7 +1636,6 @@ function createChart(canvasId, labels, data, label, color) {
   });
 
   const mainIndex = datasets.length - 1;
-
   charts[canvasId] = new Chart(canvas.getContext("2d"), {
     type: "line",
     data: { labels, datasets },
@@ -1975,7 +1693,6 @@ function createChart(canvasId, labels, data, label, color) {
 function updateAssetStats(assetId, values) {
   const stats = calculateStats(values);
   assetStats[assetId] = stats;
-
   const priceEl = document.getElementById(`price-${assetId}`);
   const changeEl = document.getElementById(`change-${assetId}`);
   const nowEl = document.getElementById(`now-${assetId}`);
@@ -1983,7 +1700,6 @@ function updateAssetStats(assetId, values) {
   const highEl = document.getElementById(`high-${assetId}`);
   const fillEl = document.getElementById(`range-fill-${assetId}`);
   const dotEl = document.getElementById(`range-dot-${assetId}`);
-
   if (!priceEl || !changeEl || !nowEl || !lowEl || !highEl || !fillEl || !dotEl)
     return;
 
@@ -1998,36 +1714,23 @@ function updateAssetStats(assetId, values) {
     dotEl.style.left = "0%";
     return;
   }
-
   priceEl.textContent = fmt(stats.close);
   nowEl.textContent = fmt(stats.close);
   lowEl.textContent = fmt(stats.low);
   highEl.textContent = fmt(stats.high);
-
   changeEl.textContent = `${stats.change >= 0 ? "▲" : "▼"} ${Math.abs(
     stats.change,
   ).toFixed(2)}%`;
   changeEl.className = `price-change ${stats.change >= 0 ? "up" : "down"}`;
-
   const pos =
     stats.high > stats.low
       ? ((stats.close - stats.low) / (stats.high - stats.low)) * 100
       : 0;
-
   fillEl.style.width = `${pos}%`;
   dotEl.style.left = `${pos}%`;
 }
 
 function updateChartData(assetId, labels, data) {
-  if (currentChartType === "candle") {
-    const chart = apexChartsInstances[assetId];
-    if (!chart) return;
-    const asset = ASSETS.find((a) => a.id === assetId);
-    if (!asset) return;
-    chart.updateSeries([{ data: buildCandles(asset) }], false);
-    return;
-  }
-
   const chart = charts[assetId];
   if (!chart) return;
 
@@ -2067,7 +1770,6 @@ function renderCharts() {
     grid.innerHTML = `<div class="empty-state">${t("noData")}</div>`;
     return;
   }
-
   const visible = getVisibleAssets();
   if (!visible.length) {
     grid.innerHTML = `<div class="empty-state">${
@@ -2075,7 +1777,6 @@ function renderCharts() {
     }</div>`;
     return;
   }
-
   visible.forEach((asset) => {
     createCard(asset);
     const full = getAssetValues(asset, currentEntries);
@@ -2083,7 +1784,6 @@ function renderCharts() {
     createChart(asset.id, displayLabels, chartVals, asset.label, asset.color);
     updateAssetStats(asset.id, full);
   });
-
   feather.replace();
 }
 
@@ -2095,22 +1795,18 @@ function renderHeatmap() {
   affordSection.style.display = "none";
   heatmapGrid.style.display = "";
   heatmapGrid.innerHTML = "";
-
   const visible = getVisibleAssets();
   if (!visible.length) {
     heatmapGrid.innerHTML = `<div class="empty-state">${t("noAssets")}</div>`;
     return;
   }
-
   visible.forEach((asset) => {
     const stats = calculateStats(getAssetValues(asset, currentEntries));
     const label = assetLabel(asset);
     const tile = document.createElement("div");
-
-    let cls = "heatmap-tile neutral";
-    let chCls = "";
-    let chTxt = "—";
-
+    let cls = "heatmap-tile neutral",
+      chCls = "",
+      chTxt = "—";
     if (stats) {
       if (stats.change > 0) {
         cls = "heatmap-tile positive";
@@ -2122,14 +1818,12 @@ function renderHeatmap() {
         chTxt = `▼ ${Math.abs(stats.change).toFixed(2)}%`;
       }
     }
-
     tile.className = cls;
     tile.innerHTML = `<div class="heatmap-label">${iconHtml(
       asset,
     )}<span class="hl-text" title="${label}">${label}</span></div><div><div class="heatmap-price">${
       stats ? fmt(stats.close) : "—"
     }</div><div class="${chCls}">${chTxt}</div></div>`;
-
     heatmapGrid.appendChild(tile);
   });
 }
@@ -2142,7 +1836,6 @@ function renderTable() {
   affordSection.style.display = "none";
   tableContainer.style.display = "";
   tableBody.innerHTML = "";
-
   const visible = getVisibleAssets();
   if (!visible.length) {
     tableBody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px">${t(
@@ -2150,13 +1843,11 @@ function renderTable() {
     )}</td></tr>`;
     return;
   }
-
   visible.forEach((asset) => {
     const fullValues = getAssetValues(asset, currentEntries);
     const stats = calculateStats(fullValues);
     const label = assetLabel(asset);
     const tr = document.createElement("tr");
-
     let ch = "—";
     if (stats) {
       const cls = stats.change >= 0 ? "up" : "down";
@@ -2165,7 +1856,6 @@ function renderTable() {
         stats.change,
       ).toFixed(2)}%</span>`;
     }
-
     const sparkId = `spark-${asset.id}`;
     tr.innerHTML = `<td><div class="table-asset">${iconHtml(
       asset,
@@ -2174,9 +1864,7 @@ function renderTable() {
     }</td><td>${stats ? fmt(stats.low) : "—"}</td><td>${
       stats ? fmt(stats.high) : "—"
     }</td><td>${ch}</td>`;
-
     tableBody.appendChild(tr);
-
     requestAnimationFrame(() => {
       const canvas = document.getElementById(sparkId);
       if (canvas) drawSparkline(canvas, fullValues.slice(-50), asset.color);
@@ -2184,49 +1872,10 @@ function renderTable() {
   });
 }
 
-function setChartType(type) {
-  if (type !== "line" && type !== "candle") return;
-
-  currentChartType = type;
-  storageSet("chartType", type);
-
-  const toggle = document.getElementById("chartTypeToggle");
-  if (toggle) {
-    toggle.querySelectorAll("button[data-type]").forEach((b) => {
-      b.classList.toggle("active", b.dataset.type === type);
-    });
-  }
-
-  if (type === "candle") ensureApexCharts();
-
-  lastChartRenderState = null;
-  renderDashboard();
-}
-
 function renderDashboard() {
-  // Auto-switch away from PAMP if no PAMP data in current entries
-  if (activeCategory === "pamp") {
-    const hasPampData = currentEntries.some(
-      (e) => e?.pamp && Array.isArray(e.pamp.items) && e.pamp.items.length > 0,
-    );
-    if (!hasPampData) {
-      activeCategory = "all";
-      document.querySelectorAll("#categoryTabs .tab").forEach((b) =>
-        b.classList.toggle("active", b.dataset.category === "all"),
-      );
-    }
-  }
-
   assetStats = {};
-  updatePampTabVisibility();
   calTooltip.classList.remove("show");
-
   colsToggle.style.display = currentMode === "charts" ? "" : "none";
-
-  const chartTypeToggle = document.getElementById("chartTypeToggle");
-  if (chartTypeToggle) {
-    chartTypeToggle.style.display = currentMode === "charts" ? "" : "none";
-  }
 
   Object.values(modeSections).forEach((el) => {
     if (el) el.style.display = "none";
@@ -2246,16 +1895,6 @@ function renderDashboard() {
   else if (currentMode === "afford") renderAfford();
 
   updateURLState();
-}
-
-function updatePampTabVisibility() {
-  const hasPampData = currentEntries.some(
-    (e) => e?.pamp && Array.isArray(e.pamp.items) && e.pamp.items.length > 0,
-  );
-  const pampTab = document.querySelector(
-    '#categoryTabs [data-category="pamp"]',
-  );
-  if (pampTab) pampTab.style.display = hasPampData ? "" : "none";
 }
 
 // ============================================================
@@ -2331,13 +1970,6 @@ const commands = [
       applyStyle(STYLES[(idx + 1) % STYLES.length]);
     },
   },
-  {
-    id: "chartType",
-    text: "Toggle Line / Candle Charts",
-    shortcut: "C",
-    action: () =>
-      setChartType(currentChartType === "candle" ? "line" : "candle"),
-  },
   { id: "all", text: "Show All Assets", action: () => setCategory("all") },
   {
     id: "currency",
@@ -2361,7 +1993,6 @@ function setView(view) {
     .querySelector(`#viewToggle [data-view="${view}"]`)
     ?.classList.add("active");
   renderDateMenu();
-
   if (currentView === "daily" && allDates.length) loadData(allDates[0]);
   if (currentView === "monthly" && allMonths.length)
     loadMonthlyData(allMonths[0].dates, allMonths[0].key);
@@ -2418,7 +2049,6 @@ function renderCommandList() {
   `,
     )
     .join("");
-
   commandList.querySelectorAll(".command-item").forEach((el) => {
     el.onclick = () => {
       const idx = parseInt(el.dataset.index);
@@ -2472,17 +2102,13 @@ document.addEventListener("keydown", (e) => {
     e.target.isContentEditable
   )
     return;
-
   const key = e.key.toLowerCase();
-
   if ((e.ctrlKey || e.metaKey) && key === "k") {
     e.preventDefault();
     openCommandPalette();
     return;
   }
-
   if (e.ctrlKey || e.metaKey || e.altKey) return;
-
   if (key === "/") {
     e.preventDefault();
     openCommandPalette();
@@ -2500,8 +2126,6 @@ document.addEventListener("keydown", (e) => {
   else if (key === "6") setMode("afford");
   else if (key === "t") applyTheme(currentTheme === "dark" ? "light" : "dark");
   else if (key === "l") applyLanguage(currentLang === "en" ? "fa" : "en");
-  else if (key === "c")
-    setChartType(currentChartType === "candle" ? "line" : "candle");
   else if (key === "s") {
     const idx = STYLES.indexOf(currentStyle);
     applyStyle(STYLES[(idx + 1) % STYLES.length]);
@@ -2524,17 +2148,14 @@ function rebuildMonths() {
 function renderDateMenu() {
   dateMenu.innerHTML = "";
   const items = currentView === "daily" ? allDates : allMonths;
-
   if (!items.length) {
     const d = document.createElement("div");
     d.textContent = "No dates found";
     dateMenu.appendChild(d);
     return;
   }
-
   items.forEach((item) => {
     const div = document.createElement("div");
-
     if (currentView === "daily") {
       div.textContent = toJalali(item);
       div.onclick = () => {
@@ -2550,7 +2171,6 @@ function renderDateMenu() {
         loadMonthlyData(item.dates, item.key);
       };
     }
-
     dateMenu.appendChild(div);
   });
 }
@@ -2559,15 +2179,12 @@ async function loadAvailableDates() {
   const res = await safeFetch(`${CONFIG.API_BASE}/data/dates.json`);
   allDates = res ? await res.json() : [];
   if (!Array.isArray(allDates)) allDates = [];
-
   rebuildMonths();
   renderDateMenu();
-
   if (!allDates.length) {
     dateBtnText.textContent = "No dates";
     return;
   }
-
   if (currentView === "daily") loadData(allDates[0]);
   else loadMonthlyData(allMonths[0].dates, allMonths[0].key);
 }
@@ -2591,14 +2208,11 @@ langBtn.addEventListener("click", () =>
 viewToggle.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-view]");
   if (!btn || btn.classList.contains("active")) return;
-
   document.querySelector("#viewToggle .active")?.classList.remove("active");
   btn.classList.add("active");
   currentView = btn.dataset.view;
-
   renderDateMenu();
   closeDrawerIfMobile();
-
   if (currentView === "daily" && allDates.length) loadData(allDates[0]);
   if (currentView === "monthly" && allMonths.length)
     loadMonthlyData(allMonths[0].dates, allMonths[0].key);
@@ -2607,11 +2221,9 @@ viewToggle.addEventListener("click", (e) => {
 modeToggle.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-mode]");
   if (!btn || btn.classList.contains("active")) return;
-
   document.querySelector("#modeToggle .active")?.classList.remove("active");
   btn.classList.add("active");
   currentMode = btn.dataset.mode;
-
   closeDrawerIfMobile();
   renderDashboard();
 });
@@ -2619,14 +2231,12 @@ modeToggle.addEventListener("click", (e) => {
 categoryTabs.addEventListener("click", (e) => {
   const btn = e.target.closest(".tab");
   if (!btn) return;
-
   activeCategory = btn.dataset.category;
   document
     .querySelectorAll("#categoryTabs .tab")
     .forEach((b) =>
       b.classList.toggle("active", b.dataset.category === activeCategory),
     );
-
   closeDrawerIfMobile();
   lastChartRenderState = null;
   renderDashboard();
@@ -2644,22 +2254,18 @@ assetSearch.addEventListener(
 grid.addEventListener("click", (e) => {
   const favBtn = e.target.closest(".fav-btn");
   if (!favBtn) return;
-
   const id = favBtn.dataset.fav;
   toggleFavorite(id);
   const isFav = favorites.includes(id);
-
   if (activeCategory === "favorites") {
     lastChartRenderState = null;
     renderDashboard();
     return;
   }
-
   favBtn.classList.toggle("active", isFav);
 });
 
 dateBtn.onclick = () => dateMenu.classList.toggle("show");
-
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".date-dropdown")) dateMenu.classList.remove("show");
 });
@@ -2669,7 +2275,6 @@ document.addEventListener("click", (e) => {
 // ============================================================
 parseURLState();
 buildDateFormatters();
-
 document.documentElement.setAttribute("data-style", currentStyle);
 styleBtn.title = "Style: " + (STYLE_NAMES[currentStyle] || currentStyle);
 
@@ -2682,31 +2287,7 @@ affordAmountInput.value = savedAmount
   ? Number(savedAmount).toLocaleString(numLocale())
   : "";
 
-// Inject Chart Type Toggle
-const searchSection = document.querySelector(".search-section");
-if (searchSection) {
-  const chartTypeToggle = document.createElement("div");
-  chartTypeToggle.className = "view-toggle";
-  chartTypeToggle.id = "chartTypeToggle";
-  chartTypeToggle.innerHTML = `
-    <button data-type="line" class="${currentChartType === "line" ? "active" : ""}">${t("line")}</button>
-    <button data-type="candle" class="${currentChartType === "candle" ? "active" : ""}">${t("candle")}</button>
-  `;
-  searchSection.insertBefore(chartTypeToggle, colsToggle);
-
-  chartTypeToggle.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-type]");
-    if (!btn) return;
-    setChartType(btn.dataset.type);
-  });
-}
-
 applyCols();
-
-if (currentChartType === "candle") {
-  ensureApexCharts();
-}
-
 applyTheme(currentTheme);
 applyLanguage(currentLang);
 
@@ -2715,11 +2296,9 @@ if (searchQuery) assetSearch.value = searchQuery;
 document
   .querySelectorAll("#viewToggle button")
   .forEach((b) => b.classList.toggle("active", b.dataset.view === currentView));
-
 document
   .querySelectorAll("#modeToggle button")
   .forEach((b) => b.classList.toggle("active", b.dataset.mode === currentMode));
-
 document
   .querySelectorAll("#categoryTabs .tab")
   .forEach((b) =>
