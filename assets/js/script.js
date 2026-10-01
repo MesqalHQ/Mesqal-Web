@@ -2,7 +2,7 @@
 // CONFIG — Pointing to the new Mesqal-Crawler GitHub Pages
 // ============================================================
 const CONFIG = {
-  API_BASE: "https://mesqal.netlify.app",
+  API_BASE: "https://mesqalhq.github.io/Mesqal-API",
   PAMP_API: "https://amirmasoud.netlify.app/api/v1/pamp",
   REFRESH_INTERVAL: 60 * 1000,
 };
