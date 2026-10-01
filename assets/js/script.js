@@ -124,12 +124,8 @@ function getJalaliMonthKey(d) {
 // ============================================================
 // ASSETS (Dynamic + Static Base)
 // ============================================================
-// Base assets (Gold, Crypto, PAMP). Currencies will be injected dynamically.
+// Base assets ONLY contains PAMP now. Currencies, Gold, and Crypto are discovered dynamically.
 let ASSETS = [
-  { id: "sekkeh", key: "sekkeh", label: "Sekkeh", color: "#eab308", category: "gold" },
-  { id: "gold", key: "18ayar", label: "Gold 18k", color: "#f59e0b", category: "gold" },
-  { id: "btc", key: "usd_btc", label: "Bitcoin", color: "#f97316", category: "crypto" },
-  { id: "usdt", key: "usd_usdt", label: "Tether", color: "#22c55e", category: "crypto" },
   { id: "pamp1", key: 1, label: "PAMP 1g", color: "#eab308", category: "pamp" },
   { id: "pamp2_5", key: 2.5, label: "PAMP 2.5g", color: "#eab308", category: "pamp" },
   { id: "pamp5", key: 5, label: "PAMP 5g", color: "#f97316", category: "pamp" },
@@ -155,12 +151,23 @@ const ICON_FALLBACKS = {
 
 const assetMeta = {};
 
-// Dynamically discover currencies from the new Arzdigital crawler JSON
-function discoverCurrencies(financialData) {
+// Helper to find the latest entry that actually has financial data (skips PAMP-only snapshots)
+function getLatestFinancialEntry(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i] && Array.isArray(entries[i].financial)) {
+      return entries[i];
+    }
+  }
+  return null;
+}
+
+// Dynamically discover ALL assets (Currencies, Gold, Crypto, Metals) from both formats
+function discoverAssets(financialData) {
   if (!Array.isArray(financialData)) return;
   
-  const staticAssets = ASSETS.filter(a => a.category !== 'currency');
-  const dynamicCurrencies = [];
+  // Keep PAMP assets intact
+  const staticAssets = ASSETS.filter(a => a.category === 'pamp');
+  const dynamicAssets = [];
   
   const palette = [
     "#3b82f6", "#a855f7", "#8b5cf6", "#ec4899", "#ef4444", 
@@ -168,29 +175,45 @@ function discoverCurrencies(financialData) {
     "#14b8a6", "#6366f1", "#d946ef", "#f97316", "#eab308"
   ];
   
-  financialData.forEach((item, index) => {
-    if (!item.id || item.price_toman === undefined) return;
+  let colorIndex = 0;
+  
+  financialData.forEach((item) => {
+    let asset = null;
     
-    const id = `cur_${item.id}`;
-    const label = item.en_name || item.name;
-    const color = palette[index % palette.length];
+    // 1. New Arzdigital Format (Currencies only)
+    if (item.id && item.price_toman !== undefined) {
+      asset = {
+        id: `cur_${item.id}`,
+        key: String(item.id),
+        label: item.en_name || item.name,
+        color: palette[colorIndex++ % palette.length],
+        category: "currency",
+        faTitle: item.name,
+        icon: `https://cdn.arz.digital/cr-odin/img/id/assets/${item.id}/64x64.png`
+      };
+    } 
+    // 2. Legacy Dastyar Format (Currencies, Gold, Crypto, Metals)
+    else if (item.key && item.price !== undefined) {
+      const cat = item.category || "currency";
+      asset = {
+        id: String(item.key), 
+        key: String(item.key),
+        label: item.enTitle || item.key,
+        color: palette[colorIndex++ % palette.length],
+        category: cat,
+        faTitle: item.title,
+        icon: item.icon || null
+      };
+    }
     
-    dynamicCurrencies.push({
-      id: id,
-      key: String(item.id), // Match by Arzdigital ID
-      label: label,
-      color: color,
-      category: "currency",
-      faTitle: item.name,
-      icon: `https://cdn.arz.digital/cr-odin/img/id/assets/${item.id}/64x64.png`
-    });
+    if (asset) {
+      dynamicAssets.push(asset);
+      assetMeta[asset.id] = { icon: asset.icon, faTitle: asset.faTitle };
+    }
   });
   
-  ASSETS = [...staticAssets, ...dynamicCurrencies];
-  
-  dynamicCurrencies.forEach(asset => {
-    assetMeta[asset.id] = { icon: asset.icon, faTitle: asset.faTitle };
-  });
+  // Replace the active ASSETS list with PAMP + newly discovered assets
+  ASSETS = [...staticAssets, ...dynamicAssets];
 }
 
 function mergePampMeta(item) {
@@ -478,7 +501,6 @@ function getChartColors() {
   const flatFont = "'Inter','Vazirmatn',sans-serif";
   const dispFont = "'Space Grotesk','Vazirmatn',sans-serif";
 
-  // Simplified for brevity, using flat theme logic as default fallback
   return isDark
     ? { text: "#a1a1aa", grid: "rgba(255,255,255,0.06)", casing: null, fill: true, fontFamily: flatFont, tooltipBg: "#18181b", tooltipText: "#fafafa", tooltipBorder: "#27272a" }
     : { text: "#71717a", grid: "rgba(0,0,0,0.06)", casing: null, fill: true, fontFamily: flatFont, tooltipBg: "#ffffff", tooltipText: "#18181b", tooltipBorder: "#e4e4e7" };
@@ -547,8 +569,13 @@ function getAssetPriceInToman(asset, entries) {
   const values = getAssetValues(asset, entries);
   const price = values[values.length - 1];
   if (!price) return null;
-  if (String(asset.key).startsWith("usd_")) {
-    const usdAsset = ASSETS.find((a) => a.key === "usd" || a.label.toLowerCase().includes("dollar"));
+  
+  // Check if it's a crypto (except USDT) or metal priced in USD
+  const isUsdPriced = (asset.category === "crypto" && asset.key !== "usd_usdt" && asset.id !== "usdt") || asset.category === "metal";
+  
+  if (isUsdPriced) {
+    // Find USD asset (Legacy: 'usd', New Arzdigital: '24201')
+    const usdAsset = ASSETS.find((a) => a.key === "usd" || a.key === "24201" || a.id === "usd" || a.id === "cur_24201");
     if (usdAsset) {
       const usdValues = getAssetValues(usdAsset, entries);
       const usdPrice = usdValues[usdValues.length - 1];
@@ -755,7 +782,7 @@ function computeDisplayIndices(length, maxPoints) {
   displayLabels = displayIndices.map((i) => currentLabels[i]);
 }
 
-// UPDATED: Handles both new Arzdigital format (id/price_toman) and legacy format (key/price)
+// Handles both new Arzdigital format (id/price_toman) and legacy format (key/price)
 function getAssetValues(asset, entries) {
   return entries.map((entry) => {
     if (!entry) return null;
@@ -804,12 +831,15 @@ async function loadData(date) {
   currentEntries = entries; currentLabels = entries.map((e) => e.time || "");
   computeDisplayIndices(currentLabels.length, 240);
   
-  // DYNAMIC DISCOVERY: Populate currencies from the latest snapshot
-  if (entries.length > 0 && entries[entries.length - 1].financial) {
-    discoverCurrencies(entries[entries.length - 1].financial);
+  // Find the latest entry that actually has financial data (skips PAMP-only updates)
+  const latestFinEntry = getLatestFinancialEntry(entries);
+  if (latestFinEntry) {
+    discoverAssets(latestFinEntry.financial);
+    extractMetaFromEntry(latestFinEntry);
+  } else if (entries.length > 0) {
+    extractMetaFromEntry(entries[entries.length - 1]);
   }
   
-  extractMetaFromEntry(entries[entries.length - 1]);
   refreshDateLabel(); lastChartRenderState = null; renderDashboard();
   const last = entries[entries.length - 1];
   if (last) { lastFooter = { view: "daily", dateStr: date, time: last.time }; renderFooter(); }
@@ -829,11 +859,14 @@ async function loadMonthlyData(dates, monthKey) {
   currentLabels = labels; currentEntries = entries;
   computeDisplayIndices(currentLabels.length, 120);
   
-  if (entries.length > 0 && entries[entries.length - 1].financial) {
-    discoverCurrencies(entries[entries.length - 1].financial);
+  const latestFinEntry = getLatestFinancialEntry(entries);
+  if (latestFinEntry) {
+    discoverAssets(latestFinEntry.financial);
+    extractMetaFromEntry(latestFinEntry);
+  } else if (entries.length > 0) {
+    extractMetaFromEntry(entries[entries.length - 1]);
   }
   
-  extractMetaFromEntry(entries[entries.length - 1]);
   refreshDateLabel(); lastChartRenderState = null; renderDashboard();
   if (dates.length && entries.length) {
     const last = entries[entries.length - 1];
